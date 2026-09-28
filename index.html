@@ -1,0 +1,182 @@
+<!doctype html>
+<html lang="tr"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Sipariş &amp; Ürün Takip</title>
+<link rel="icon" type="image/png" href="favicon.png">
+<link rel="stylesheet" href="dashboard.css"></head>
+<body>
+<div class="page-head">
+<header class="top">
+  <button id="brandHome" class="brand" type="button" title="Ana sayfaya dön">
+    <img src="logo.png" alt="" class="logo">
+    <div><h1>Sipariş ve Ürün Takip</h1><div id="sub" class="muted"></div></div>
+  </button>
+  <div class="actions">
+    <button id="addManual" class="btn">+ Manuel alım ekle</button>
+    <button id="refresh" class="btn">↻ Yenile</button>
+    <button id="export" class="btn primary">⬇ Excel'e aktar</button>
+    <button id="changePw" class="btn">🔒 Şifre değiştir</button>
+    <button id="logout" class="btn sec">Çıkış yap</button>
+  </div>
+</header>
+<div class="tabs-bar">
+  <button id="tabsToggle" class="tabs-toggle" type="button" aria-expanded="false" aria-label="Menü">
+    <span></span><span></span><span></span>
+  </button>
+  <nav class="tabs" id="tabs">
+    <button data-tab="overview" class="on">Genel Bakış</button>
+    <button data-tab="stock">Ürün &amp; Stok</button>
+    <button data-tab="orders">Ürün Alımları</button>
+    <button data-tab="storeOrders">Siparişler</button>
+    <button data-tab="items">Kalemler</button>
+    <button data-tab="expenses">Giderler &amp; Faturalar</button>
+    <button data-tab="invoices">Fatura Kontrol</button>
+    <button data-tab="seller">Mağaza &amp; Karlılık</button>
+  </nav>
+  <!-- v11: Umit'in isteğiyle — eskiden "Siparişler" ve "Mağaza & Karlılık" sekmelerinin içinde,
+       aşağıda kaybolan iki ayrı buton vardı. Artık TEK, her zaman görünen (üst çubukta sabit)
+       bir buton var; hangi sekmede olursan ol aynı mağaza senkronunu tetikliyor. -->
+  <button id="sellerSyncNow" class="icon-btn labeled" type="button" title="Trendyol mağaza verilerini şimdi senkronize et">↻ <span>Senkronize Et</span></button>
+  <button id="openProfitCalc" class="icon-btn labeled" type="button" title="Komisyon &amp; Kârlılık Hesapla">🧮 <span>Karlılık Hesapla</span></button>
+</div>
+<div id="banner" class="banner hide"></div>
+
+<section class="filters">
+  <div class="filters-bar">
+    <button id="filtersToggle" class="filters-toggle" type="button" aria-expanded="true">
+      <span>Filtreler</span><span id="filtersActiveCount" class="filters-badge hide">0</span><span class="chev">▾</span>
+    </button>
+    <div class="filters-quick"><input type="search" id="q" placeholder="ürün, marka, barkod, sipariş no, takip no… ara"></div>
+  </div>
+  <div class="filters-body" id="filtersBody">
+    <div class="f"><label>Tarih aralığı</label>
+      <select id="preset"><option value="all">Tümü</option><option value="today">Bugün</option><option value="yesterday">Dün</option><option value="week">Bu hafta</option><option value="month">Bu ay</option><option value="lastmonth">Geçen ay</option><option value="30">Son 30 gün</option><option value="90">Son 3 ay</option><option value="year">Bu yıl</option><option value="custom">Özel</option></select></div>
+    <div class="f"><label>Başlangıç</label><input type="date" id="from"></div>
+    <div class="f"><label>Bitiş</label><input type="date" id="to"></div>
+    <div class="f"><label>Hesap</label><div id="fAccount"></div></div>
+    <div class="f"><label>Kaynak</label><div id="fSource"></div></div>
+    <div class="f"><label>Marka</label><div id="fBrand"></div></div>
+    <div class="f"><label>Satıcı</label><div id="fSeller"></div></div>
+    <div class="f"><label>Durum</label><div id="fGroup"></div></div>
+    <div class="f"><label>Sipariş Durumu</label>
+      <select id="ocStatus">
+        <option value="">Sipariş Durumu — hepsi</option>
+        <option value="preparing">Yeni</option>
+        <option value="onway">Kargolandı</option>
+        <option value="delivered">Teslim Edildi</option>
+        <option value="closed">İptal / İade</option>
+      </select>
+    </div>
+    <div class="f chk"><label><input type="checkbox" id="ocHideCancelled"> İptalleri Gizle (Siparişler)</label></div>
+    <div class="f chk"><label><input type="checkbox" id="svc"> Trendyol Pass'i dahil et</label></div>
+    <div class="f chk"><label><input type="checkbox" id="sellerOnlyMissing"> Sadece maliyeti eksik olanlar (Mağaza)</label></div>
+    <div class="f"><label>&nbsp;</label><button id="clear" class="btn">Temizle</button></div>
+  </div>
+</section>
+</div>
+
+<main>
+  <nav id="quickChips" class="quick-chips">
+    <button type="button" data-preset="today">Bugün</button>
+    <button type="button" data-preset="yesterday">Dün</button>
+    <button type="button" data-preset="week">Bu Hafta</button>
+    <button type="button" data-preset="month">Bu Ay</button>
+    <button type="button" data-preset="lastmonth">Geçen Ay</button>
+    <button type="button" data-preset="all" class="on">Tümü</button>
+  </nav>
+  <section id="cards" class="cards"></section>
+
+  <section id="tab-overview" class="tab">
+    <nav class="subtabs" id="ovSubtabs">
+      <button data-ov="buy" class="on">Alışlarım <span class="muted">Trendyol'dan satın aldıklarım</span></button>
+      <button data-ov="sell">Satışlarım <span class="muted">mağazamdan Trendyol'a satılan</span></button>
+    </nav>
+    <div id="ov-buy" class="ovpane">
+      <div class="charts">
+        <div class="chartbox"><h3>Aylık harcama</h3><div class="ch"><canvas id="cMonthly"></canvas></div></div>
+        <div class="chartbox"><h3>Durum dağılımı (adet)</h3><div class="ch"><canvas id="cStatus"></canvas></div></div>
+        <div class="chartbox"><h3>Marka bazlı harcama (ilk 10)</h3><div class="ch"><canvas id="cBrand"></canvas></div></div>
+        <div class="chartbox"><h3>Hesap bazlı harcama</h3><div class="ch"><canvas id="cAccount"></canvas></div></div>
+        <div class="chartbox"><h3>En çok alınan ürünler (adet, ilk 10)</h3><div class="ch"><canvas id="cProducts"></canvas></div></div>
+      </div>
+    </div>
+    <div id="ov-sell" class="ovpane hide">
+      <section id="storeSalesCards" class="cards"></section>
+      <div class="charts">
+        <div class="chartbox"><h3>Aylık mağaza satışı (brüt / net)</h3><div class="ch"><canvas id="cStoreSales"></canvas></div></div>
+        <div class="chartbox"><h3>Marka bazlı mağaza satışı (ilk 10)</h3><div class="ch"><canvas id="cStoreBrand"></canvas></div></div>
+        <div class="chartbox"><h3>Mağaza sipariş durumu (adet)</h3><div class="ch"><canvas id="cStoreStatus"></canvas></div></div>
+      </div>
+    </div>
+  </section>
+  <section id="tab-items" class="tab hide"><div id="tItems"></div></section>
+  <section id="tab-orders" class="tab hide"><div id="tOrders"></div></section>
+  <section id="tab-storeOrders" class="tab hide">
+    <div id="storeOrdersSettleWarn" class="warn-banner hide"></div>
+    <div class="tinfo" style="margin-bottom:10px">
+      <div id="storeOrdersSub" class="muted"></div>
+    </div>
+    <section id="storeOrdersCards" class="cards"></section>
+    <!-- v12: Umit'in isteğiyle — bu sekmeye özel ayrı bir filtre kutusu kalmadı, hepsi (Tarih,
+         Arama, Sipariş Durumu, İptalleri Gizle) üstteki tek genel filtre panelinde. -->
+    <div id="tSellerOrders"></div>
+    <p id="storeOrdersStats" class="muted" style="margin-top:10px"></p>
+  </section>
+  <section id="tab-stock" class="tab hide">
+    <div id="tStock"></div>
+  </section>
+  <section id="tab-expenses" class="tab hide">
+    <div class="tinfo" style="margin-bottom:10px">
+      <div class="muted">Şirket giderleri ve faturaların. Üstteki tarih aralığı burayı da etkiler.</div>
+      <button id="addExpense" class="btn primary">+ Gider Ekle</button>
+    </div>
+    <section class="filters" style="position:static;border-radius:12px;border:1px solid #e5e7eb;margin-bottom:14px">
+      <div class="filters-body">
+        <div class="f"><label>Kategori</label><div id="fExpCategory"></div></div>
+        <div class="f"><label>Ödeme Yöntemi</label><div id="fExpMethod"></div></div>
+        <div class="f"><label>Ödenen Kurum</label><div id="fExpVendor"></div></div>
+        <div class="f grow"><label>Ara</label><input type="search" id="expQ" placeholder="başlık, kurum, not…"></div>
+        <div class="f"><label>&nbsp;</label><button id="expClear" class="btn">Temizle</button></div>
+      </div>
+    </section>
+    <section id="expCards" class="cards"></section>
+    <div class="charts" style="margin-bottom:16px">
+      <div class="chartbox"><h3>Aylık gider</h3><div class="ch"><canvas id="cExpMonthly"></canvas></div></div>
+      <div class="chartbox"><h3>Kategori dağılımı</h3><div class="ch"><canvas id="cExpCategory"></canvas></div></div>
+      <div class="chartbox"><h3>Kurum bazlı gider (ilk 10)</h3><div class="ch"><canvas id="cExpVendor"></canvas></div></div>
+    </div>
+    <div id="tExpenses"></div>
+  </section>
+  <section id="tab-invoices" class="tab hide">
+    <div class="tinfo" style="margin-bottom:10px">
+      <label class="chk-inline"><input type="checkbox" id="invOnlyUnchecked" checked> Sadece kontrol edilmemiş olanları göster</label>
+    </div>
+    <div id="tInvoices"></div>
+  </section>
+  <section id="tab-seller" class="tab hide">
+    <div id="sellerSettleWarn" class="warn-banner hide"></div>
+    <div class="tinfo" style="margin-bottom:10px">
+      <div id="sellerSub" class="muted"></div>
+    </div>
+    <section id="sellerCards" class="cards"></section>
+    <input type="file" id="orderCostsFile" accept=".xlsx,.xls" class="hide">
+    <!-- v12: Umit'in isteğiyle — bu sekmeye özel ayrı Marka/Ara kutusu kalmadı, üstteki tek genel
+         filtre panelini kullanıyor (Marka çoklu-seçim ve arama kutusu artık ürün adı/barkod/marka
+         üzerinden de arıyor). "Sadece maliyeti eksik olanlar" üstteki panelde tek başına kaldı. -->
+    <div class="charts" style="margin-bottom:16px">
+      <div class="chartbox"><h3>Tutar nereye gidiyor (tahmini, tüm mağaza)</h3><div class="ch"><canvas id="cProfitPie"></canvas></div></div>
+      <div class="chartbox"><h3>Aylık net kâr — tahmini / kesin</h3><div class="ch"><canvas id="cProfitTrend"></canvas></div></div>
+      <div class="chartbox"><h3>Marka bazlı net kâr (ilk 10)</h3><div class="ch"><canvas id="cSellerBrand"></canvas></div></div>
+      <div class="chartbox"><h3>En çok satan ürünler (adet, ilk 10)</h3><div class="ch"><canvas id="cSellerTop"></canvas></div></div>
+    </div>
+    <div id="tSeller"></div>
+  </section>
+</main>
+
+
+<div id="modal" class="modal hide"></div>
+<script src="lib/chart.umd.js"></script>
+<script src="lib/xlsx.full.min.js"></script>
+<script src="config.js"></script>
+<script src="webapi.js"></script>
+<script src="dashboard.js"></script>
+</body></html>
