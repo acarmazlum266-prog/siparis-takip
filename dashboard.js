@@ -778,7 +778,9 @@
   // hesaplanmış mı? — hiçbiri gelmemişse "henüz hesaplanmadı" sayılır (alt istatistik için).
   const hasExtraCosts = (r) => [r.cargo_fee, r.return_cargo_fee, r.penalty_fee, r.cancel_amount, r.return_amount, r.other_amount].some((v) => v != null);
   const isCancelledOrder = (r) => /iptal|cancel/i.test(r.status || '') || num(r.cancel_amount) < 0;
-  const isReturnedOrder = (r) => /iade|return/i.test(r.status || '') || num(r.return_amount) < 0;
+  const isReturnedOrder = (r) => /iade|return|undeliver/i.test(r.status || '') || num(r.return_amount) < 0;
+  // Trendyol raporuyla uyum: iptal + iade/teslim edilemeyen PAKETLER satıştan düşülür.
+  const isClosedSellerOrder = (r) => isCancelledOrder(r) || /return|undeliver/i.test(r.status || '');
   // Sipariş bazında net tutar: gross_amount + (komisyon/kargo/ceza/iptal/iade/diğer — hepsi
   // Trendyol'dan zaten NEGATİF (kesinti) olarak geliyor, null olanlar 0 sayılır).
   const orderNet = (r) => num(r.gross_amount) + num(r.commission_amount) + num(r.cargo_fee) + num(r.return_cargo_fee) + num(r.penalty_fee) + num(r.cancel_amount) + num(r.return_amount) + num(r.other_amount);
@@ -869,7 +871,7 @@
     // ne kadar tutarında iptal/iade olduğunu ayrı kartlarda gösteriyoruz (bilgi amaçlı, 2. satır).
     const cancelledRs = dateRs.filter(isCancelledOrder);
     const returnedRs = dateRs.filter((r) => isReturnedOrder(r) && !isCancelledOrder(r));
-    const activeRs = dateRs.filter((r) => !isCancelledOrder(r));
+    const activeRs = dateRs.filter((r) => !isClosedSellerOrder(r));
     const activeQty = sumBy(activeRs, (r) => r.qty);
     const rangeNote = (F.from || F.to) ? ' (seçili tarih aralığı)' : ' (tüm zamanlar)';
     $('#sellerCards').replaceChildren(
@@ -932,7 +934,7 @@
   // Tahmini: her zaman hesaplanabilir (gerçek veri geldiyse gerçeği, gelmediyse formül/tahmini kullanır).
   // Kesin: SADECE komisyonu VE kargosu gerçek veriyle kesinleşmiş siparişleri toplar.
   function profitAgg(list) {
-    const active = (list || []).filter((r) => !isCancelledOrder(r));
+    const active = (list || []).filter((r) => !isClosedSellerOrder(r));
     const revenue = sumBy(active, (r) => num(r.gross_amount));
     const cost = sumBy(active, (r) => r.estimated_cost);
     const commission = sumBy(active, (r) => (r.commission_amount != null ? num(r.commission_amount) : -num(r.commission_estimated)));
@@ -983,8 +985,9 @@
       host.replaceChildren(card('preparing', 'Bu tarih aralığında kayıt yok', '—', `toplam ${int(sellerOrders.length)} sipariş var, tarih filtresini kontrol et`));
       return;
     }
-    const active = rs.filter((r) => !isCancelledOrder(r));
+    const active = rs.filter((r) => !isClosedSellerOrder(r));
     const activeGross = sumBy(active, (r) => r.gross_amount);
+    const cancelOnly = rs.filter(isCancelledOrder).length;
     const costMissingCount = rs.filter((r) => r.cost_missing).length;
     const agg = profitAgg(rs);
     const dp = deliveredProfit(rs);
@@ -994,7 +997,7 @@
       card('total', 'Toplam Satış', money(activeGross), `${int(active.length)} sipariş · ${int(activeQty)} adet`),
       // Umit'in isteğiyle: büyük rakam artık iptalleri SAYMIYOR (iptaller hariç aktif sipariş
       // sayısı) — iptal/iade sayısı ayrı bir bilgi olarak alt satırda gösteriliyor.
-      card('onway', 'Sipariş Adeti', int(active.length), `${int(activeQty)} adet` + (cancelledCount ? ` · ${int(cancelledCount)} iptal/iade (dahil değil)` : ' · iptal/iade yok')),
+      card('onway', 'Sipariş Adeti', int(active.length), `${int(activeQty)} adet` + (cancelledCount ? ` · ${int(cancelOnly)} iptal · ${int(cancelledCount - cancelOnly)} iade/teslim edilemedi (dahil değil)` : ' · iptal/iade yok')),
       card('onway', 'Toplam Komisyon', money(-agg.commission), 'sipariş anında kesinleşen oran'),
       card('preparing', 'Toplam Kesintiler', money(-agg.allDeductions), 'kargo+ceza+diğer+platform+stopaj'),
       card('onway', 'Toplam Ürün Maliyeti', money(agg.cost), costMissingCount ? `* ${int(costMissingCount)} siparişte ürün maliyeti eksik` : 'ortalama alış fiyatından hesaplandı'),
