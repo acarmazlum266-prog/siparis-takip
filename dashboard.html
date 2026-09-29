@@ -7,8 +7,8 @@
 <div class="page-head">
 <header class="top">
   <button id="brandHome" class="brand" type="button" title="Ana sayfaya dön">
-    <img src="logo.png" alt="" class="logo">
-    <div><h1>Sipariş ve Ürün Takip</h1><div id="sub" class="muted"></div></div>
+    <img src="logo.png" alt="SOUCARE" class="logo">
+    <div><h1>SOUCARE Sipariş ve Ürün Takip</h1><div id="sub" class="muted"></div></div>
   </button>
   <div class="actions">
     <button id="addManual" class="btn">+ Manuel alım ekle</button>
@@ -157,18 +157,49 @@
     <div class="tinfo" style="margin-bottom:10px">
       <div id="sellerSub" class="muted"></div>
     </div>
-    <section id="sellerCards" class="cards"></section>
-    <input type="file" id="orderCostsFile" accept=".xlsx,.xls" class="hide">
-    <!-- v12: Umit'in isteğiyle — bu sekmeye özel ayrı Marka/Ara kutusu kalmadı, üstteki tek genel
-         filtre panelini kullanıyor (Marka çoklu-seçim ve arama kutusu artık ürün adı/barkod/marka
-         üzerinden de arıyor). "Sadece maliyeti eksik olanlar" üstteki panelde tek başına kaldı. -->
-    <div class="charts" style="margin-bottom:16px">
-      <div class="chartbox"><h3>Tutar nereye gidiyor (tahmini, tüm mağaza)</h3><div class="ch"><canvas id="cProfitPie"></canvas></div></div>
-      <div class="chartbox"><h3>Aylık net kâr — tahmini / kesin</h3><div class="ch"><canvas id="cProfitTrend"></canvas></div></div>
-      <div class="chartbox"><h3>Marka bazlı net kâr (ilk 10)</h3><div class="ch"><canvas id="cSellerBrand"></canvas></div></div>
-      <div class="chartbox"><h3>En çok satan ürünler (adet, ilk 10)</h3><div class="ch"><canvas id="cSellerTop"></canvas></div></div>
+    <nav class="subtabs" id="sellerSubtabs">
+      <button data-st="products" class="on">Ürünler &amp; Kârlılık <span class="muted">ürün bazlı stok, satış, kâr</span></button>
+      <button data-st="settlement">Hakediş Raporu <span class="muted">Trendyol'dan gelen hakediş kayıtları</span></button>
+    </nav>
+    <div id="seller-products" class="ovpane">
+      <section id="sellerCards" class="cards"></section>
+      <input type="file" id="orderCostsFile" accept=".xlsx,.xls" class="hide">
+      <!-- v12: Umit'in isteğiyle — bu sekmeye özel ayrı Marka/Ara kutusu kalmadı, üstteki tek genel
+           filtre panelini kullanıyor (Marka çoklu-seçim ve arama kutusu artık ürün adı/barkod/marka
+           üzerinden de arıyor). "Sadece maliyeti eksik olanlar" üstteki panelde tek başına kaldı. -->
+      <div class="charts" style="margin-bottom:16px">
+        <div class="chartbox"><h3>Tutar nereye gidiyor (tahmini, tüm mağaza)</h3><div class="ch"><canvas id="cProfitPie"></canvas></div></div>
+        <div class="chartbox"><h3>Aylık net kâr — tahmini / kesin</h3><div class="ch"><canvas id="cProfitTrend"></canvas></div></div>
+        <div class="chartbox"><h3>Marka bazlı net kâr (ilk 10)</h3><div class="ch"><canvas id="cSellerBrand"></canvas></div></div>
+        <div class="chartbox"><h3>En çok satan ürünler (adet, ilk 10)</h3><div class="ch"><canvas id="cSellerTop"></canvas></div></div>
+      </div>
+      <div id="tSeller"></div>
     </div>
-    <div id="tSeller"></div>
+    <div id="seller-settlement" class="ovpane hide">
+      <div class="tinfo" style="margin-bottom:10px">
+        <div id="settleSub" class="muted"></div>
+      </div>
+      <div class="tinfo" style="margin-bottom:8px">
+        <div class="muted">Tüm zamanlar — üstteki tarih filtresinden bağımsız</div>
+      </div>
+      <section id="settleTotalCards" class="cards"></section>
+      <div class="tinfo" style="margin:6px 0 8px">
+        <div class="muted">Seçili dönem</div>
+      </div>
+      <section id="settleCards" class="cards"></section>
+      <div class="f" style="max-width:420px;margin:0 0 14px">
+        <label>Sipariş No ile Ara</label>
+        <input type="search" id="settleOrderSearch" placeholder="sipariş numarasını yazın…">
+      </div>
+      <div id="settleOrderResult"></div>
+      <div class="charts" style="margin-bottom:16px">
+        <div class="chartbox" style="grid-column:1/-1"><h3>Aylık hakediş trendi</h3><div class="ch"><canvas id="cSettleTrend"></canvas></div></div>
+      </div>
+      <div class="tinfo" style="margin-bottom:10px">
+        <div class="muted">Teslim edildi ama hakedişi henüz gelmemiş siparişler</div>
+      </div>
+      <div id="settlePending"></div>
+    </div>
   </section>
 </main>
 
