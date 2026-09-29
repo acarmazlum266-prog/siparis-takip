@@ -126,7 +126,7 @@
       (!F.brands.size || F.brands.has(r.brand || 'Markasız')) &&
       (!F.sellers.size || F.sellers.has(r.seller_name || 'Bilinmiyor')) &&
       (!F.groups.size || F.groups.has(grp(r.item_status))) &&
-      (!F.accounts.size || F.accounts.has(r.buyer_account || 'Ana Hesap')) &&
+      (!F.accounts.size || F.accounts.has(r.buyer_account || 'Ümit')) &&
       (!F.sources.size || F.sources.has(r.order_source || 'trendyol')) &&
       (!q || hay(r).includes(q)));
   }
@@ -1027,11 +1027,19 @@
   // "Bugün kapatsam ne kadar alırım" TEK BİR tutarlı yöntemle hesaplanmalı — hem hakedişi zaten
   // gelmiş siparişler hem de henüz gelmemişler için AYNI formül (estimatedPayout, kargo/ceza/platform/
   // stopaj tahminini de düşen). Böylece bu rakam, Ürünler & Kârlılık sekmesindeki "Toplam Satış −
-  // Komisyon − Kesintiler" ile birebir tutarlı olur (kargo bedeli gerçekten kesilmiş olsun olmasın,
-  // her siparişte kesileceği varsayılıyor). NOT: "Şimdiye Kadar Alınan" kartı bundan FARKLI bir şey
-  // gösterir — bugüne kadar hesabına geçmiş GERÇEK parayı (henüz kargo düşülmemiş haliyle).
+  // Komisyon − Kesintiler" ile birebir tutarlı olur.
+  // v19 DÜZELTME: ÖNCEDEN trendyolBalance() (gerçek settlement + gerçek otherfinancials) kullanılıyordu
+  // — ama hakedişi gelmiş bazı siparişlerde kargo/ceza faturası henüz Trendyol'dan senkronize
+  // OLMADIĞI için o siparişlerde kesinti "0" sayılıyor, bu da toplamı olması gerekenden YÜKSEK
+  // gösteriyordu (30.09.2026'da tespit edildi — Ürünler & Kârlılık'ın tahmini ~68.000 TL'sine karşı
+  // burası hatalı biçimde ~85.000 TL gösteriyordu). Artık hakedişi gelmiş/gelmemiş ayrımı yapmadan
+  // TÜM aktif siparişlere aynı tahmini formül uygulanıyor — gerçek kargo/komisyon verisi geldiyse
+  // estimatedPayout zaten onu kullanıyor (bkz. v_ty_seller_orders_detail), gelmediyse tahmini
+  // formüle düşüyor. "Trendyol'da Bekleyen Bakiye" kartı BUNDAN AYRI — o kasıtlı olarak Trendyol'un
+  // kendi ham/gerçek verisini gösteriyor (Trendyol panelindeki 'Toplam Güncel Bakiye' ile
+  // karşılaştırmak için), ona dokunulmadı.
   function totalProjectedPayout() {
-    return trendyolBalance() + totalFutureEstimated();
+    return sumBy(sellerOrders.filter((r) => !isClosedSellerOrder(r)), estimatedPayout);
   }
   function renderSettleTotals() {
     if (!$('#settleTotalCards')) return;
@@ -1052,7 +1060,7 @@
       card('onway', "Trendyol'da Bekleyen Bakiye", money(balance),
         "hakedişi yazılmış ama henüz hesabına ödenmemiş (Trendyol'daki 'Toplam Güncel Bakiye' ile karşılaştır)"),
       card('delivered', 'Mağazayı Bugün Kapatsam Alacağım Toplam (Tahmini)', money(projected),
-        `bekleyen bakiye + hakedişi henüz gelmemiş ${int(pending.length)} siparişin tahmini tutarı`, 'future'));
+        `${int(sellerOrders.filter((r) => !isClosedSellerOrder(r)).length)} aktif siparişin tahmini net ödemesi (komisyon+kargo+ceza+platform+stopaj düşülmüş — Ürünler & Kârlılık ile aynı yöntem)`, 'future'));
   }
   // Kartlara tıklayınca altta hangi kayıtların açılacağını belirler: 'all' | 'commission' | 'other' | 'return' | 'search' | 'receivedAll' | 'future'
   function renderSettleCards() {
@@ -1670,7 +1678,7 @@
 
   function openManualModal() {
     const modal = $('#modal');
-    const accounts = uniq(['Ana Hesap', ...rows.map((r) => r.buyer_account).filter(Boolean)]);
+    const accounts = uniq(['Ümit', ...rows.map((r) => r.buyer_account).filter(Boolean)]);
     const stores = uniq(rows.filter((r) => r.order_source === 'manual').map((r) => r.seller_name).filter(Boolean));
     const { pmap, smap } = buildProdMaps();
     const dl = (id, arr) => el('datalist', { id }, arr.map((v) => el('option', { value: v })));
@@ -1678,7 +1686,7 @@
 
     const store = el('input', { type: 'text', list: 'dlStores', placeholder: 'Örn. Hepsiburada, Amazon, market adı' });
     const date = el('input', { type: 'date' }); date.value = iso(new Date());
-    const acct = el('input', { type: 'text', list: 'dlAccts' }); acct.value = accounts[0] || 'Ana Hesap';
+    const acct = el('input', { type: 'text', list: 'dlAccts' }); acct.value = accounts[0] || 'Ümit';
     const status = el('select', {}, [['delivered', 'Teslim edildi'], ['shipped', 'Yolda'], ['preparing', 'Hazırlanıyor']].map(([v, l]) => el('option', { value: v, text: l })));
     const ship = el('input', { type: 'number', step: '0.01', min: '0', placeholder: '0' });
     const url = el('input', { type: 'text', placeholder: 'https://… (isteğe bağlı sipariş linki)' });
@@ -1806,7 +1814,7 @@
     const cats = uniq(['Pazarlama', 'Şirket Kuruluşu', 'Ofis', 'Yazılım / Abonelik', 'Kargo', 'Vergi', 'Diğer', ...expenses.map((e) => e.category).filter(Boolean)]);
     const methods = uniq(['Kredi Kartı', 'Banka Havalesi', 'Nakit', ...expenses.map((e) => e.payment_method).filter(Boolean)]);
     const vendors = uniq(expenses.map((e) => e.vendor).filter(Boolean));
-    const payers = uniq(['Ana Hesap', 'Eşim', 'Şirket', ...expenses.map((e) => e.paid_by).filter(Boolean)]);
+    const payers = uniq(['Ümit', 'Eşim', 'Şirket', ...expenses.map((e) => e.paid_by).filter(Boolean)]);
     const dl = (id, arr) => el('datalist', { id }, arr.map((v) => el('option', { value: v })));
     const F2 = (label, node) => el('div', { class: 'row' }, el('label', { text: label }), node);
 
@@ -2048,7 +2056,7 @@
   function init() {
     multis.brand = multi($('#fBrand'), 'Marka', () => uniq([...rows.map((r) => r.brand || 'Markasız'), ...sellerProfit.map((r) => r.brand || 'Markasız'), ...F.brands]).map((v) => ({ value: v, label: v })), F.brands);
     multis.seller = multi($('#fSeller'), 'Satıcı', () => uniq([...rows.map((r) => r.seller_name || 'Bilinmiyor'), ...F.sellers]).map((v) => ({ value: v, label: v })), F.sellers);
-    multis.account = multi($('#fAccount'), 'Hesap', () => uniq([...rows.map((r) => r.buyer_account || 'Ana Hesap'), ...F.accounts]).map((v) => ({ value: v, label: v })), F.accounts);
+    multis.account = multi($('#fAccount'), 'Hesap', () => uniq([...rows.map((r) => r.buyer_account || 'Ümit'), ...F.accounts]).map((v) => ({ value: v, label: v })), F.accounts);
     multis.source = multi($('#fSource'), 'Kaynak', () => [{ value: 'trendyol', label: 'Trendyol' }, { value: 'manual', label: 'Manuel' }], F.sources);
     multis.group = multi($('#fGroup'), 'Durum', () => Object.keys(GROUPS).map((k) => ({ value: k, label: GROUPS[k].label })), F.groups);
     multis.expCategory = multi($('#fExpCategory'), 'Kategori', () => uniq(expenses.map((e) => e.category || 'Kategorisiz')).map((v) => ({ value: v, label: v })), EF.categories);
