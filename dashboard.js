@@ -126,7 +126,7 @@
       (!F.brands.size || F.brands.has(r.brand || 'Markasız')) &&
       (!F.sellers.size || F.sellers.has(r.seller_name || 'Bilinmiyor')) &&
       (!F.groups.size || F.groups.has(grp(r.item_status))) &&
-      (!F.accounts.size || F.accounts.has(r.buyer_account || 'Ümit')) &&
+      (!F.accounts.size || F.accounts.has(r.buyer_account || 'Ana Hesap')) &&
       (!F.sources.size || F.sources.has(r.order_source || 'trendyol')) &&
       (!q || hay(r).includes(q)));
   }
@@ -789,7 +789,9 @@
   // hesaplanmış mı? — hiçbiri gelmemişse "henüz hesaplanmadı" sayılır (alt istatistik için).
   const hasExtraCosts = (r) => [r.cargo_fee, r.return_cargo_fee, r.penalty_fee, r.cancel_amount, r.return_amount, r.other_amount].some((v) => v != null);
   const isCancelledOrder = (r) => /iptal|cancel/i.test(r.status || '') || num(r.cancel_amount) < 0;
-  const isReturnedOrder = (r) => /iade|return/i.test(r.status || '') || num(r.return_amount) < 0;
+  const isReturnedOrder = (r) => /iade|return|undeliver/i.test(r.status || '') || num(r.return_amount) < 0;
+  // Trendyol raporuyla uyum: iptal + iade/teslim edilemeyen PAKETLER satıştan düşülür.
+  const isClosedSellerOrder = (r) => isCancelledOrder(r) || /return|undeliver/i.test(r.status || '');
   // Sipariş bazında net tutar: gross_amount + (komisyon/kargo/ceza/iptal/iade/diğer — hepsi
   // Trendyol'dan zaten NEGATİF (kesinti) olarak geliyor, null olanlar 0 sayılır).
   const orderNet = (r) => num(r.gross_amount) + num(r.commission_amount) + num(r.cargo_fee) + num(r.return_cargo_fee) + num(r.penalty_fee) + num(r.cancel_amount) + num(r.return_amount) + num(r.other_amount);
@@ -880,7 +882,7 @@
     // ne kadar tutarında iptal/iade olduğunu ayrı kartlarda gösteriyoruz (bilgi amaçlı, 2. satır).
     const cancelledRs = dateRs.filter(isCancelledOrder);
     const returnedRs = dateRs.filter((r) => isReturnedOrder(r) && !isCancelledOrder(r));
-    const activeRs = dateRs.filter((r) => !isCancelledOrder(r));
+    const activeRs = dateRs.filter((r) => !isClosedSellerOrder(r));
     const activeQty = sumBy(activeRs, (r) => r.qty);
     const rangeNote = (F.from || F.to) ? ' (seçili tarih aralığı)' : ' (tüm zamanlar)';
     $('#sellerCards').replaceChildren(
@@ -893,7 +895,7 @@
       card('onway', 'Toplam Ürün Maliyeti', money(agg.cost), missing.length ? `* ${int(missing.length)} üründe maliyet eksik` : 'ortalama alış fiyatından hesaplandı'),
       card(agg.netEstimated < 0 ? 'closed' : 'delivered', 'Tahmini Net Kâr', money(agg.netEstimated), 'satış − (komisyon+kesintiler+ürün maliyeti)' + rangeNote),
       card(cancelledRs.length ? 'closed' : 'preparing', 'İptaller', money(sumBy(cancelledRs, (r) => r.gross_amount)), `${int(cancelledRs.length)} sipariş` + rangeNote),
-      card(returnedRs.length ? 'closed' : 'preparing', 'İadeler', money(sumBy(returnedRs, (r) => Math.abs(num(r.return_amount)))), `${int(returnedRs.length)} sipariş` + rangeNote),
+      card(returnedRs.length ? 'closed' : 'preparing', 'İadeler', money(sumBy(returnedRs, (r) => (num(r.return_amount) ? Math.abs(num(r.return_amount)) : num(r.gross_amount)))), `${int(returnedRs.length)} sipariş` + rangeNote),
       card(dp.n ? (dp.sum < 0 ? 'closed' : 'delivered') : 'preparing', 'Kesinleşen Kâr',
         dp.n ? money(dp.sum) : '—', (dp.n ? `${int(dp.n)} teslim edilen sipariş` : 'henüz teslim edilen sipariş yok') + rangeNote,
         dp.n ? goToDeliveredOrders : null));
@@ -943,14 +945,40 @@
   // göre daraltılmış dönemsel özet, sipariş no ile arama, aylık trend ve "hakedişi henüz gelmemiş
   // siparişler" listesi. "Ürünler & Kârlılık" alt sekmesindeki tahmini/kesin kâr hesabından bağımsız —
   // burada SADECE Trendyol'dan gerçekten gelmiş hakediş satırları gösteriliyor.
+  // v18 (30 Eylül): Trendyol finans kayıtlarında tür adları TÜRKÇE geliyor ("Satış", "İade",
+  // "Ödeme", "Komisyon Faturası"...). "Ödeme" = hesaba yatan para (kesinti DEĞİL), "Komisyon
+  // Faturası" = hakedişten ZATEN düşülmüş komisyonun faturası (tekrar düşülmemeli).
+  const isSaleType = (t) => /^(sale|satış|satis)$/i.test(String(t || '').trim());
+  const isReturnType = (t) => /^(return|iade)$/i.test(String(t || '').trim());
+  const isPayoutOF = (r) => /ödeme|odeme|payment/i.test(String(r.transaction_type || ''));
+  const isCommInvoiceOF = (r) => /komisyon fatura|commissioninvoice|commission invoice/i.test(String(r.transaction_type || ''));
+  const isRealDeductionOF = (r) => !isPayoutOF(r) && !isCommInvoiceOF(r);
+  // Kayıt henüz bir ödeme emrine bağlanmamışsa (paymentOrderId boş) para hâlâ Trendyol'da bekliyor.
+  const isUnpaidFin = (r) => { const v = r.raw && r.raw.paymentOrderId; return v == null || v === '' || v === 0 || v === '0'; };
+  // Takip başlangıcı = mağaza siparişlerinin en eski tarihi (TY_SYNC_START). Finans kayıtları bakiye
+  // doğru çıksın diye daha geriden çekiliyor; "başlangıçtan beri" kartları bu tarihe göre süzülür.
+  function scopeStart() {
+    let m = '';
+    sellerOrders.forEach((r) => { const d = r.order_date ? String(r.order_date).slice(0, 10) : ''; if (d && (!m || d < m)) m = d; });
+    return m;
+  }
+  function scopeOrderNos() { return new Set(sellerOrders.map((r) => r.order_number).filter(Boolean)); }
+  function scopedSettlements() { const nos = scopeOrderNos(); return sellerSettlements.filter((r) => nos.has(r.order_number)); }
+  function scopedOtherFin() { const st = scopeStart(); return sellerOtherFin.filter((r) => { const d = r.transaction_date ? String(r.transaction_date).slice(0, 10) : ''; return !st || (d && d >= st); }); }
+  function scopedPayouts() { const st = scopeStart(); return sellerPayouts.filter((r) => { const d = r.payout_date ? String(r.payout_date).slice(0, 10) : ''; return !st || (d && d >= st); }); }
+  // Trendyol'da bekleyen bakiye: ödenmemiş hakediş + ödenmemiş gerçek kesintiler (tüm çekilen kayıtlar).
+  function trendyolBalance() {
+    return sumBy(sellerSettlements.filter(isUnpaidFin), (r) => r.seller_revenue)
+      + sumBy(sellerOtherFin.filter((r) => isUnpaidFin(r) && isRealDeductionOF(r)), (r) => r.amount);
+  }
   function settlementsInDateRange() {
-    return sellerSettlements.filter((r) => {
+    return scopedSettlements().filter((r) => {
       const d = r.transaction_date ? String(r.transaction_date).slice(0, 10) : '';
       return (!F.from || (d && d >= F.from)) && (!F.to || (d && d <= F.to));
     });
   }
   function otherFinInDateRange() {
-    return sellerOtherFin.filter((r) => {
+    return scopedOtherFin().filter(isRealDeductionOF).filter((r) => {
       const d = r.transaction_date ? String(r.transaction_date).slice(0, 10) : '';
       return (!F.from || (d && d >= F.from)) && (!F.to || (d && d <= F.to));
     });
@@ -959,7 +987,7 @@
   // "Hakediş" (settlements) ile KARIŞTIRILMAMALI: o Trendyol'un iç muhasebe kaydı, bu ise gerçekten
   // hesabına yatmış para. payout_date'e göre süzülür (üstteki tarih aralığı filtresiyle aynı mantık).
   function payoutsInDateRange() {
-    return sellerPayouts.filter((r) => {
+    return scopedPayouts().filter((r) => {
       const d = r.payout_date ? String(r.payout_date).slice(0, 10) : '';
       return (!F.from || (d && d >= F.from)) && (!F.to || (d && d <= F.to));
     });
@@ -979,13 +1007,13 @@
   }
   // Şimdiye kadar Trendyol'dan gerçekten alınmış toplam net para (tüm zamanlar).
   function totalReceivedAllTime() {
-    return sumBy(sellerSettlements, (r) => r.seller_revenue);
+    return sumBy(scopedSettlements(), (r) => r.seller_revenue);
   }
   // Henüz hakedişi gelmemiş, iptal olmayan TÜM siparişler (durumu ne olursa olsun — hazırlanıyor,
   // yolda, teslim edildi ama hakediş gelmemiş) — "hepsi teslim olursa" varsayımıyla bekleyen siparişler.
   function futurePendingOrders() {
     const settled = settledOrderNumberSet();
-    return sellerOrders.filter((r) => !isCancelledOrder(r) && !settled.has(r.order_number));
+    return sellerOrders.filter((r) => !isClosedSellerOrder(r) && !settled.has(r.order_number));
   }
   // Bir siparişten Trendyol'un SANA ÖDEYECEĞİ tahmini tutar (net_profit_estimated ürün maliyetini
   // de düşer — o senin kendi cebinden çıkan bir masraf, Trendyol'un kesintisi değil; burada geri
@@ -1003,25 +1031,28 @@
   // her siparişte kesileceği varsayılıyor). NOT: "Şimdiye Kadar Alınan" kartı bundan FARKLI bir şey
   // gösterir — bugüne kadar hesabına geçmiş GERÇEK parayı (henüz kargo düşülmemiş haliyle).
   function totalProjectedPayout() {
-    const active = sellerOrders.filter((r) => !isCancelledOrder(r));
-    return sumBy(active, estimatedPayout);
+    return trendyolBalance() + totalFutureEstimated();
   }
   function renderSettleTotals() {
     if (!$('#settleTotalCards')) return;
     const received = totalReceivedAllTime();
     const pending = futurePendingOrders();
     const projected = totalProjectedPayout();
-    const activeCount = sellerOrders.filter((r) => !isCancelledOrder(r)).length;
+    const balance = trendyolBalance();
+    const st = scopeStart();
+    const since = st ? ` · ${fdate(st)} tarihinden beri` : '';
     const card = (cls, lbl, big, sub, mode) => el('div', { class: 'card ' + cls + (mode ? ' clickable' : ''), title: mode ? 'Detayları görmek için tıkla' : '', onclick: mode ? () => { SRF.mode = mode; SRF.q = ''; if ($('#settleOrderSearch')) $('#settleOrderSearch').value = ''; renderSettleDetail(); } : null },
       el('div', { class: 'lbl', text: lbl }), el('div', { class: 'big', text: big }), el('div', { class: 'sub', text: sub || '' }));
-    const paidAllTime = totalPayoutsAllTime();
+    const paidAllTime = sumBy(scopedPayouts(), (r) => r.amount);
     $('#settleTotalCards').replaceChildren(
-      card('total', 'Şimdiye Kadar Alınan Toplam Hakediş', money(received),
-        `${int(sellerSettlements.length)} hakediş işlemi · Trendyol'un muhasebe kaydı, henüz hesabına yatmamış olabilir · tüm zamanlar`, 'receivedAll'),
-      card('preparing', 'Hesabına Gerçekten Yatan Toplam (Ödeme)', money(paidAllTime),
-        `${int(sellerPayouts.length)} ödeme · Trendyol'un banka hesabına aktardığı GERÇEK tutar · tüm zamanlar`, 'payoutsAll'),
+      card('total', 'Kazanılan Toplam Hakediş', money(received),
+        `${int(scopedSettlements().length)} hakediş işlemi${since} · Trendyol'un muhasebe kaydı (ödenmiş + bekleyen)`, 'receivedAll'),
+      card('preparing', 'Hesabına Yatan (Ödeme)', money(paidAllTime),
+        `${int(scopedPayouts().length)} ödeme${since} · banka hesabına aktarılan GERÇEK tutar`, 'payoutsAll'),
+      card('onway', "Trendyol'da Bekleyen Bakiye", money(balance),
+        "hakedişi yazılmış ama henüz hesabına ödenmemiş (Trendyol'daki 'Toplam Güncel Bakiye' ile karşılaştır)"),
       card('delivered', 'Mağazayı Bugün Kapatsam Alacağım Toplam (Tahmini)', money(projected),
-        `${int(activeCount)} aktif sipariş · komisyon+kargo+kesintiler tahmini düşülmüş · ${int(pending.length)} siparişin hakedişi henüz gelmedi`, 'future'));
+        `bekleyen bakiye + hakedişi henüz gelmemiş ${int(pending.length)} siparişin tahmini tutarı`, 'future'));
   }
   // Kartlara tıklayınca altta hangi kayıtların açılacağını belirler: 'all' | 'commission' | 'other' | 'return' | 'search' | 'receivedAll' | 'future'
   function renderSettleCards() {
@@ -1033,8 +1064,8 @@
     const netHakedis = sumBy(set, (r) => r.seller_revenue);
     const komisyon = sumBy(set, (r) => r.commission_amount);
     const diger = sumBy(ofs, (r) => r.amount);
-    const sales = set.filter((r) => r.transaction_type === 'Sale');
-    const returns = set.filter((r) => r.transaction_type === 'Return');
+    const sales = set.filter((r) => isSaleType(r.transaction_type));
+    const returns = set.filter((r) => isReturnType(r.transaction_type));
     const rangeNote = (F.from || F.to) ? ' (seçili tarih aralığı)' : ' (tüm zamanlar)';
     const pos = payoutsInDateRange();
     const paidInRange = sumBy(pos, (r) => r.amount);
@@ -1115,7 +1146,7 @@
     const mode = SRF.mode;
     if (!mode) { host.replaceChildren(); return; }
     if (mode === 'future') { renderFuturePayoutDetail(host); return; }
-    if (mode === 'payoutsAll') { renderPayoutsDetail(host, sellerPayouts, 'Hesabına yatan tüm ödemeler (tüm zamanlar)'); return; }
+    if (mode === 'payoutsAll') { renderPayoutsDetail(host, scopedPayouts(), 'Hesabına yatan ödemeler (takip başlangıcından beri)'); return; }
     if (mode === 'payoutsRange') { renderPayoutsDetail(host, payoutsInDateRange(), 'Hesabına yatan ödemeler (seçili tarih aralığı)'); return; }
     let settles = [], others = [], title = '';
     if (mode === 'search') {
@@ -1125,13 +1156,13 @@
       others = sellerOtherFin.filter((r) => String(r.order_number || '').includes(q));
       title = `#${q} sipariş no araması`;
     } else if (mode === 'receivedAll') {
-      settles = sellerSettlements; others = []; title = 'Şimdiye kadar alınan tüm hakediş işlemleri (tüm zamanlar)';
+      settles = scopedSettlements(); others = []; title = 'Kazanılan tüm hakediş işlemleri (takip başlangıcından beri)';
     } else {
       const set = settlementsInDateRange(), ofs = otherFinInDateRange();
       if (mode === 'all') { settles = set; others = ofs; title = 'Tüm hakediş kayıtları'; }
-      else if (mode === 'commission') { settles = set.filter((r) => r.transaction_type === 'Sale'); title = 'Komisyon kesintisi olan satış işlemleri'; }
+      else if (mode === 'commission') { settles = set.filter((r) => isSaleType(r.transaction_type)); title = 'Komisyon kesintisi olan satış işlemleri'; }
       else if (mode === 'other') { others = ofs; title = 'Kargo / ceza / platform kesintileri'; }
-      else if (mode === 'return') { settles = set.filter((r) => r.transaction_type === 'Return'); title = 'İade işlemleri'; }
+      else if (mode === 'return') { settles = set.filter((r) => isReturnType(r.transaction_type)); title = 'İade işlemleri'; }
     }
     if (!settles.length && !others.length) {
       host.replaceChildren(el('p', { class: 'muted', text: mode === 'search' ? `#${SRF.q} için hakediş kaydı bulunamadı — henüz gelmemiş olabilir.` : 'Bu kategoride kayıt yok.' }));
@@ -1193,7 +1224,7 @@
   // Tahmini: her zaman hesaplanabilir (gerçek veri geldiyse gerçeği, gelmediyse formül/tahmini kullanır).
   // Kesin: SADECE komisyonu VE kargosu gerçek veriyle kesinleşmiş siparişleri toplar.
   function profitAgg(list) {
-    const active = (list || []).filter((r) => !isCancelledOrder(r));
+    const active = (list || []).filter((r) => !isClosedSellerOrder(r));
     const revenue = sumBy(active, (r) => num(r.gross_amount));
     const cost = sumBy(active, (r) => r.estimated_cost);
     const commission = sumBy(active, (r) => (r.commission_amount != null ? num(r.commission_amount) : -num(r.commission_estimated)));
@@ -1244,8 +1275,9 @@
       host.replaceChildren(card('preparing', 'Bu tarih aralığında kayıt yok', '—', `toplam ${int(sellerOrders.length)} sipariş var, tarih filtresini kontrol et`));
       return;
     }
-    const active = rs.filter((r) => !isCancelledOrder(r));
+    const active = rs.filter((r) => !isClosedSellerOrder(r));
     const activeGross = sumBy(active, (r) => r.gross_amount);
+    const cancelOnly = rs.filter(isCancelledOrder).length;
     const costMissingCount = rs.filter((r) => r.cost_missing).length;
     const agg = profitAgg(rs);
     const dp = deliveredProfit(rs);
@@ -1255,7 +1287,7 @@
       card('total', 'Toplam Satış', money(activeGross), `${int(active.length)} sipariş · ${int(activeQty)} adet`),
       // Umit'in isteğiyle: büyük rakam artık iptalleri SAYMIYOR (iptaller hariç aktif sipariş
       // sayısı) — iptal/iade sayısı ayrı bir bilgi olarak alt satırda gösteriliyor.
-      card('onway', 'Sipariş Adeti', int(active.length), `${int(activeQty)} adet` + (cancelledCount ? ` · ${int(cancelledCount)} iptal/iade (dahil değil)` : ' · iptal/iade yok')),
+      card('onway', 'Sipariş Adeti', int(active.length), `${int(activeQty)} adet` + (cancelledCount ? ` · ${int(cancelOnly)} iptal · ${int(cancelledCount - cancelOnly)} iade/teslim edilemedi (dahil değil)` : ' · iptal/iade yok')),
       card('onway', 'Toplam Komisyon', money(-agg.commission), 'sipariş anında kesinleşen oran'),
       card('preparing', 'Toplam Kesintiler', money(-agg.allDeductions), 'kargo+ceza+diğer+platform+stopaj'),
       card('onway', 'Toplam Ürün Maliyeti', money(agg.cost), costMissingCount ? `* ${int(costMissingCount)} siparişte ürün maliyeti eksik` : 'ortalama alış fiyatından hesaplandı'),
@@ -1638,7 +1670,7 @@
 
   function openManualModal() {
     const modal = $('#modal');
-    const accounts = uniq(['Ümit', ...rows.map((r) => r.buyer_account).filter(Boolean)]);
+    const accounts = uniq(['Ana Hesap', ...rows.map((r) => r.buyer_account).filter(Boolean)]);
     const stores = uniq(rows.filter((r) => r.order_source === 'manual').map((r) => r.seller_name).filter(Boolean));
     const { pmap, smap } = buildProdMaps();
     const dl = (id, arr) => el('datalist', { id }, arr.map((v) => el('option', { value: v })));
@@ -1646,7 +1678,7 @@
 
     const store = el('input', { type: 'text', list: 'dlStores', placeholder: 'Örn. Hepsiburada, Amazon, market adı' });
     const date = el('input', { type: 'date' }); date.value = iso(new Date());
-    const acct = el('input', { type: 'text', list: 'dlAccts' }); acct.value = accounts[0] || 'Ümit';
+    const acct = el('input', { type: 'text', list: 'dlAccts' }); acct.value = accounts[0] || 'Ana Hesap';
     const status = el('select', {}, [['delivered', 'Teslim edildi'], ['shipped', 'Yolda'], ['preparing', 'Hazırlanıyor']].map(([v, l]) => el('option', { value: v, text: l })));
     const ship = el('input', { type: 'number', step: '0.01', min: '0', placeholder: '0' });
     const url = el('input', { type: 'text', placeholder: 'https://… (isteğe bağlı sipariş linki)' });
@@ -1774,7 +1806,7 @@
     const cats = uniq(['Pazarlama', 'Şirket Kuruluşu', 'Ofis', 'Yazılım / Abonelik', 'Kargo', 'Vergi', 'Diğer', ...expenses.map((e) => e.category).filter(Boolean)]);
     const methods = uniq(['Kredi Kartı', 'Banka Havalesi', 'Nakit', ...expenses.map((e) => e.payment_method).filter(Boolean)]);
     const vendors = uniq(expenses.map((e) => e.vendor).filter(Boolean));
-    const payers = uniq(['Ümit', 'Eşim', 'Şirket', ...expenses.map((e) => e.paid_by).filter(Boolean)]);
+    const payers = uniq(['Ana Hesap', 'Eşim', 'Şirket', ...expenses.map((e) => e.paid_by).filter(Boolean)]);
     const dl = (id, arr) => el('datalist', { id }, arr.map((v) => el('option', { value: v })));
     const F2 = (label, node) => el('div', { class: 'row' }, el('label', { text: label }), node);
 
@@ -2016,7 +2048,7 @@
   function init() {
     multis.brand = multi($('#fBrand'), 'Marka', () => uniq([...rows.map((r) => r.brand || 'Markasız'), ...sellerProfit.map((r) => r.brand || 'Markasız'), ...F.brands]).map((v) => ({ value: v, label: v })), F.brands);
     multis.seller = multi($('#fSeller'), 'Satıcı', () => uniq([...rows.map((r) => r.seller_name || 'Bilinmiyor'), ...F.sellers]).map((v) => ({ value: v, label: v })), F.sellers);
-    multis.account = multi($('#fAccount'), 'Hesap', () => uniq([...rows.map((r) => r.buyer_account || 'Ümit'), ...F.accounts]).map((v) => ({ value: v, label: v })), F.accounts);
+    multis.account = multi($('#fAccount'), 'Hesap', () => uniq([...rows.map((r) => r.buyer_account || 'Ana Hesap'), ...F.accounts]).map((v) => ({ value: v, label: v })), F.accounts);
     multis.source = multi($('#fSource'), 'Kaynak', () => [{ value: 'trendyol', label: 'Trendyol' }, { value: 'manual', label: 'Manuel' }], F.sources);
     multis.group = multi($('#fGroup'), 'Durum', () => Object.keys(GROUPS).map((k) => ({ value: k, label: GROUPS[k].label })), F.groups);
     multis.expCategory = multi($('#fExpCategory'), 'Kategori', () => uniq(expenses.map((e) => e.category || 'Kategorisiz')).map((v) => ({ value: v, label: v })), EF.categories);
