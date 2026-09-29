@@ -50,7 +50,7 @@
 
   // ---------- durum ----------
   let rows = [], stock = [], orders = [], expenses = [], invoices = [], sellerProfit = [], sellerOrders = [], sellerLastSync = null, me = null;
-  let sellerSettlements = [], sellerOtherFin = [];
+  let sellerSettlements = [], sellerOtherFin = [], sellerPayouts = [];
   let sellerSubtab = 'products';
   const SRF = { q: '', mode: null }; // Hakediş Raporu: sipariş no arama kutusu + kart tıklamasıyla açılan detay kategorisi
   const F = { from: '', to: '', brands: new Set(), sellers: new Set(), groups: new Set(), accounts: new Set(), sources: new Set(), q: '', services: false };
@@ -83,7 +83,7 @@
     banner('');
     $('#sub').textContent = 'Veriler yükleniyor…';
     try {
-      const [r, s, o, ex, inv, sp, sl, so, se, of, who] = await Promise.all([
+      const [r, s, o, ex, inv, sp, sl, so, se, of, po, who] = await Promise.all([
         getAll('/rest/v1/v_ty_order_items_report?select=*&order=order_date.desc.nullslast,order_no.desc,order_item_id'),
         getAll('/rest/v1/v_ty_product_stock?select=*&order=product_name,product_id'),
         getAll('/rest/v1/ty_orders?select=id,order_no,order_date,status,total_amount,subtotal,shipping_fee,item_count,package_count,order_url,last_synced_at,invoice_no,notes&order=order_date.desc.nullslast,id'),
@@ -97,9 +97,12 @@
         // artık ayrı bir raporda da gösteriliyor.
         getAll('/rest/v1/ty_seller_settlements?select=*&order=transaction_date.desc').catch(() => []),
         getAll('/rest/v1/ty_seller_other_financials?select=*&order=transaction_date.desc').catch(() => []),
+        // Gerçek ödemeler: Trendyol'un banka hesabına GERÇEKTEN aktardığı ("PAID") toplu ödeme
+        // emirleri — hakediş kaydından farklı, "ne zaman ne kadar hesabıma yattı" sorusunun cevabı.
+        getAll('/rest/v1/ty_seller_payouts?select=*&order=payout_date.desc').catch(() => []),
         me ? Promise.resolve(me) : call({ type: 'WHOAMI' }).catch(() => null),
       ]);
-      rows = r; stock = s; orders = o; expenses = ex; invoices = inv || []; sellerProfit = sp || []; sellerLastSync = (sl && sl[0]) || null; sellerOrders = so || []; sellerSettlements = se || []; sellerOtherFin = of || []; me = who;
+      rows = r; stock = s; orders = o; expenses = ex; invoices = inv || []; sellerProfit = sp || []; sellerLastSync = (sl && sl[0]) || null; sellerOrders = so || []; sellerSettlements = se || []; sellerOtherFin = of || []; sellerPayouts = po || []; me = who;
       const t = new Date();
       $('#sub').textContent = `${int(stock.length)} Ürün · ${int(orders.length)} Alış · ${int(sellerOrders.length)} Satış · güncelleme ${pad(t.getHours())}:${pad(t.getMinutes())}`;
       refreshOptions();
@@ -952,6 +955,18 @@
       return (!F.from || (d && d >= F.from)) && (!F.to || (d && d <= F.to));
     });
   }
+  // Gerçek ödemeler (ty_seller_payouts) — Trendyol'un banka hesabına GERÇEKTEN aktardığı tutar.
+  // "Hakediş" (settlements) ile KARIŞTIRILMAMALI: o Trendyol'un iç muhasebe kaydı, bu ise gerçekten
+  // hesabına yatmış para. payout_date'e göre süzülür (üstteki tarih aralığı filtresiyle aynı mantık).
+  function payoutsInDateRange() {
+    return sellerPayouts.filter((r) => {
+      const d = r.payout_date ? String(r.payout_date).slice(0, 10) : '';
+      return (!F.from || (d && d >= F.from)) && (!F.to || (d && d <= F.to));
+    });
+  }
+  function totalPayoutsAllTime() {
+    return sumBy(sellerPayouts, (r) => r.amount);
+  }
   function settleTypeLabel(t) {
     const m = { Sale: 'Satış', Return: 'İade', Discount: 'İndirim', DiscountCancel: 'İndirim İptali', Coupon: 'Kupon' };
     return m[t] || t || 'Bilinmiyor';
@@ -999,9 +1014,12 @@
     const activeCount = sellerOrders.filter((r) => !isCancelledOrder(r)).length;
     const card = (cls, lbl, big, sub, mode) => el('div', { class: 'card ' + cls + (mode ? ' clickable' : ''), title: mode ? 'Detayları görmek için tıkla' : '', onclick: mode ? () => { SRF.mode = mode; SRF.q = ''; if ($('#settleOrderSearch')) $('#settleOrderSearch').value = ''; renderSettleDetail(); } : null },
       el('div', { class: 'lbl', text: lbl }), el('div', { class: 'big', text: big }), el('div', { class: 'sub', text: sub || '' }));
+    const paidAllTime = totalPayoutsAllTime();
     $('#settleTotalCards').replaceChildren(
       card('total', 'Şimdiye Kadar Alınan Toplam Hakediş', money(received),
-        `${int(sellerSettlements.length)} hakediş işlemi · kargo bedeli henüz düşülmemiş olabilir · tüm zamanlar`, 'receivedAll'),
+        `${int(sellerSettlements.length)} hakediş işlemi · Trendyol'un muhasebe kaydı, henüz hesabına yatmamış olabilir · tüm zamanlar`, 'receivedAll'),
+      card('preparing', 'Hesabına Gerçekten Yatan Toplam (Ödeme)', money(paidAllTime),
+        `${int(sellerPayouts.length)} ödeme · Trendyol'un banka hesabına aktardığı GERÇEK tutar · tüm zamanlar`, 'payoutsAll'),
       card('delivered', 'Mağazayı Bugün Kapatsam Alacağım Toplam (Tahmini)', money(projected),
         `${int(activeCount)} aktif sipariş · komisyon+kargo+kesintiler tahmini düşülmüş · ${int(pending.length)} siparişin hakedişi henüz gelmedi`, 'future'));
   }
@@ -1018,11 +1036,14 @@
     const sales = set.filter((r) => r.transaction_type === 'Sale');
     const returns = set.filter((r) => r.transaction_type === 'Return');
     const rangeNote = (F.from || F.to) ? ' (seçili tarih aralığı)' : ' (tüm zamanlar)';
+    const pos = payoutsInDateRange();
+    const paidInRange = sumBy(pos, (r) => r.amount);
     $('#settleCards').replaceChildren(
       card('total', 'Toplam Hakediş (Net)', money(netHakedis), `${int(set.length)} işlem` + rangeNote, 'all'),
       card('onway', 'Toplam Komisyon Kesintisi', money(komisyon ? -Math.abs(komisyon) : 0), `${int(sales.length)} satış işlemi` + rangeNote, 'commission'),
       card('preparing', 'Kargo/Ceza/Platform (Diğer)', money(diger), `${int(ofs.length)} kayıt` + rangeNote, 'other'),
-      card(returns.length ? 'closed' : 'delivered', 'İade İşlemi', int(returns.length), 'hakediş kayıtları içinde' + rangeNote, 'return'));
+      card(returns.length ? 'closed' : 'delivered', 'İade İşlemi', int(returns.length), 'hakediş kayıtları içinde' + rangeNote, 'return'),
+      card('delivered', 'Hesabına Yatan (Gerçek Ödeme)', money(paidInRange), `${int(pos.length)} ödeme` + rangeNote, 'payoutsRange'));
   }
   function renderSettleTrend() {
     if (typeof Chart === 'undefined') return;
@@ -1067,11 +1088,35 @@
         el('thead', {}, el('tr', {}, el('th', { text: 'Tarih' }), el('th', { text: 'Sipariş No' }), el('th', { text: 'Durum' }), el('th', { text: 'Ürün' }), el('th', { text: 'Tahmini Ödeme' }))),
         el('tbody', {}, ...rowsEl))));
   }
+  // "Hesabına Gerçekten Yatan" kartlarının detayı: ty_seller_payouts'tan gerçek ödeme emirleri
+  // (hakediş kaydından değil — bu GERÇEKTEN banka hesabına geçmiş tutarlar).
+  function renderPayoutsDetail(host, list, title) {
+    if (!list.length) {
+      host.replaceChildren(el('p', { class: 'muted', text: 'Bu aralıkta hesabına yatan bir ödeme kaydı yok — Trendyol henüz ödeme emri oluşturmamış olabilir.' }));
+      return;
+    }
+    const sorted = [...list].sort((a, b) => (b.payout_date || '').localeCompare(a.payout_date || ''));
+    const rowsEl = sorted.map((r) => el('tr', {},
+      el('td', { text: fdate((r.payout_date || '').slice(0, 10)) }),
+      el('td', { text: r.payment_order_id || '' }),
+      el('td', { text: r.status || '' }),
+      el('td', { text: r.region_name || '' }),
+      el('td', { text: money(r.amount) })));
+    host.replaceChildren(
+      el('div', { class: 'tinfo' },
+        el('div', { text: `${title} — ${int(sorted.length)} ödeme, toplam ${money(sumBy(sorted, (r) => r.amount))}` }),
+        closeSettleDetailBtn()),
+      el('div', { class: 'twrap' }, el('table', {},
+        el('thead', {}, el('tr', {}, el('th', { text: 'Ödeme Tarihi' }), el('th', { text: 'Ödeme No' }), el('th', { text: 'Durum' }), el('th', { text: 'Bölge' }), el('th', { text: 'Tutar' }))),
+        el('tbody', {}, ...rowsEl))));
+  }
   function renderSettleDetail() {
     const host = $('#settleOrderResult'); if (!host) return;
     const mode = SRF.mode;
     if (!mode) { host.replaceChildren(); return; }
     if (mode === 'future') { renderFuturePayoutDetail(host); return; }
+    if (mode === 'payoutsAll') { renderPayoutsDetail(host, sellerPayouts, 'Hesabına yatan tüm ödemeler (tüm zamanlar)'); return; }
+    if (mode === 'payoutsRange') { renderPayoutsDetail(host, payoutsInDateRange(), 'Hesabına yatan ödemeler (seçili tarih aralığı)'); return; }
     let settles = [], others = [], title = '';
     if (mode === 'search') {
       const q = (SRF.q || '').trim();
