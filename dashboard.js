@@ -789,9 +789,18 @@
   // hesaplanmış mı? — hiçbiri gelmemişse "henüz hesaplanmadı" sayılır (alt istatistik için).
   const hasExtraCosts = (r) => [r.cargo_fee, r.return_cargo_fee, r.penalty_fee, r.cancel_amount, r.return_amount, r.other_amount].some((v) => v != null);
   const isCancelledOrder = (r) => /iptal|cancel/i.test(r.status || '') || num(r.cancel_amount) < 0;
-  const isReturnedOrder = (r) => /iade|return|undeliver/i.test(r.status || '') || num(r.return_amount) < 0;
-  // Trendyol raporuyla uyum: iptal + iade/teslim edilemeyen PAKETLER satıştan düşülür.
-  const isClosedSellerOrder = (r) => isCancelledOrder(r) || /return|undeliver/i.test(r.status || '');
+  // v20 DÜZELTME (30.09.2026): ÖNCEDEN "undelivered" (kargo teslim edemedi, henüz iade süreci
+  // TAMAMLANMADI) durumu "iade" ile aynı regex'e ("iade|return|undeliver") yakalanıp erkenden
+  // İADE/kapalı sayılıyordu — hem "İadeler" kartında hem stok/kârlılık hesaplarında Trendyol'un
+  // kendi rakamlarıyla (Net Satış Adedi) TUTARSIZLIK yaratıyordu (bkz. SQL tarafındaki aynı
+  // düzeltme, 34_fix_undelivered_stok_erken_sayilmasin.sql). Artık SADECE gerçekten geri dönmüş
+  // ("Returned" / "UnDeliveredAndReturned" — ikisi de "return" içeriyor) siparişler "iade" sayılıyor.
+  // Salt "UnDelivered" (süreç bitmedi) artık AYRI bir durum: satışa/aktife dahil kalıyor ama
+  // "teslim edilemedi" olarak ayrıca bilgi amaçlı gösteriliyor (bkz. isUnDeliveredPendingOrder).
+  const isConfirmedReturnedOrder = (r) => /iade|return/i.test(r.status || '') || num(r.return_amount) < 0;
+  const isUnDeliveredPendingOrder = (r) => /undelivered/i.test(r.status || '') && !isConfirmedReturnedOrder(r);
+  // Trendyol raporuyla uyum: sadece iptal + KESİNLEŞMİŞ iade paketleri satıştan düşülür.
+  const isClosedSellerOrder = (r) => isCancelledOrder(r) || isConfirmedReturnedOrder(r);
   // Sipariş bazında net tutar: gross_amount + (komisyon/kargo/ceza/iptal/iade/diğer — hepsi
   // Trendyol'dan zaten NEGATİF (kesinti) olarak geliyor, null olanlar 0 sayılır).
   const orderNet = (r) => num(r.gross_amount) + num(r.commission_amount) + num(r.cargo_fee) + num(r.return_cargo_fee) + num(r.penalty_fee) + num(r.cancel_amount) + num(r.return_amount) + num(r.other_amount);
@@ -864,6 +873,21 @@
     if ($('#ocStatus')) $('#ocStatus').value = 'delivered';
     renderAll();
   }
+  // Kart tıklamalarında sipariş listesi göstermek için kompakt sütun seti — zaten var olan
+  // sellerOrderCols'un (Siparişler tablosu) alt kümesi, modal'a sığması için.
+  const sellerOrderModalCols = sellerOrderCols.filter((c) => ['order_date', 'order_number', 'status', 'products', 'qty', 'gross_amount', 'net'].includes(c.key));
+  function openSellerOrderListModal(title, items) {
+    const modal = $('#modal');
+    const host = el('div', {});
+    modal.replaceChildren(el('div', { class: 'mbox wide' },
+      el('div', { style: 'display:flex;justify-content:space-between;align-items:center;gap:10px;margin-bottom:10px' },
+        el('h2', { text: title, style: 'margin:0' }),
+        el('button', { class: 'btn sm', text: 'Kapat', onclick: closeModal })),
+      host));
+    modal.classList.remove('hide');
+    makeTable(host, sellerOrderModalCols, () => items, { sortKey: 'order_date', sortDir: -1, empty: 'Kayıt yok',
+      summary: (d) => `${int(d.length)} sipariş · ${int(sumBy(d, (r) => r.qty))} adet · ${money(sumBy(d, (r) => r.gross_amount))}` }).render();
+  }
   function renderSellerCards(rs) {
     if (!$('#sellerCards')) return; // eski önbelleğe alınmış HTML'de bu bölüm yoksa sessizce atla
     const card = (cls, lbl, big, sub, onClick) => el('div', { class: 'card ' + cls + (onClick ? ' clickable' : ''), title: onClick ? 'Hangi siparişler olduğunu görmek için tıkla' : '', onclick: onClick },
@@ -879,23 +903,36 @@
     const agg = profitAgg(dateRs);
     const dp = deliveredProfit(dateRs);
     // İptaller/İadeler: Toplam Satış (İptaller Hariç) zaten bunları hesaba katmıyor — burada ayrıca
-    // ne kadar tutarında iptal/iade olduğunu ayrı kartlarda gösteriyoruz (bilgi amaçlı, 2. satır).
+    // ne kadar tutarında iptal/KESİNLEŞMİŞ iade olduğunu ayrı kartlarda gösteriyoruz (bilgi amaçlı).
+    // v20: "İadeler" artık SADECE gerçekten geri dönmüş siparişleri sayıyor (isConfirmedReturnedOrder)
+    // — "UnDelivered" (henüz süreç bitmedi) bununla KARIŞTIRILMIYOR, ayrı "teslim edilemedi" bilgisi
+    // olarak gösteriliyor ve aktif/satış sayılmaya devam ediyor.
     const cancelledRs = dateRs.filter(isCancelledOrder);
-    const returnedRs = dateRs.filter((r) => isReturnedOrder(r) && !isCancelledOrder(r));
+    const returnedRs = dateRs.filter((r) => isConfirmedReturnedOrder(r) && !isCancelledOrder(r));
+    const undeliveredRs = dateRs.filter(isUnDeliveredPendingOrder);
     const activeRs = dateRs.filter((r) => !isClosedSellerOrder(r));
     const activeQty = sumBy(activeRs, (r) => r.qty);
     const rangeNote = (F.from || F.to) ? ' (seçili tarih aralığı)' : ' (tüm zamanlar)';
+    const undeliveredNote = undeliveredRs.length ? ` · ${int(undeliveredRs.length)} teslim edilemedi (satışa dahil, henüz kesin iade değil)` : '';
     $('#sellerCards').replaceChildren(
-      card('total', 'Toplam Satış', money(agg.revenue), `tüm mağaza · ${int(agg.n)} sipariş · ${int(activeQty)} adet` + rangeNote),
+      card('total', 'Toplam Satış', money(agg.revenue), `tüm mağaza · ${int(agg.n)} sipariş · ${int(activeQty)} adet` + rangeNote,
+        () => openSellerOrderListModal('Toplam Satış', activeRs)),
       // Umit'in isteğiyle: büyük rakam artık iptalleri SAYMIYOR (iptaller hariç aktif sipariş
       // sayısı) — iptal/iade sayıları ayrı bir bilgi olarak alt satırda gösteriliyor.
-      card('onway', 'Sipariş Adeti', int(agg.n), `${int(activeQty)} adet` + ((cancelledRs.length || returnedRs.length) ? ` · ${int(cancelledRs.length)} iptal · ${int(returnedRs.length)} iade (dahil değil)` : ' · iptal/iade yok') + rangeNote),
-      card('onway', 'Toplam Komisyon', money(-agg.commission), 'sipariş anında kesinleşen oran' + rangeNote),
-      card('preparing', 'Toplam Kesintiler', money(-agg.allDeductions), 'kargo+ceza+diğer+platform+stopaj' + rangeNote),
-      card('onway', 'Toplam Ürün Maliyeti', money(agg.cost), missing.length ? `* ${int(missing.length)} üründe maliyet eksik` : 'ortalama alış fiyatından hesaplandı'),
-      card(agg.netEstimated < 0 ? 'closed' : 'delivered', 'Tahmini Net Kâr', money(agg.netEstimated), 'satış − (komisyon+kesintiler+ürün maliyeti)' + rangeNote),
-      card(cancelledRs.length ? 'closed' : 'preparing', 'İptaller', money(sumBy(cancelledRs, (r) => r.gross_amount)), `${int(cancelledRs.length)} sipariş` + rangeNote),
-      card(returnedRs.length ? 'closed' : 'preparing', 'İadeler', money(sumBy(returnedRs, (r) => (num(r.return_amount) ? Math.abs(num(r.return_amount)) : num(r.gross_amount)))), `${int(returnedRs.length)} sipariş` + rangeNote),
+      card('onway', 'Sipariş Adeti', int(agg.n), `${int(activeQty)} adet` + ((cancelledRs.length || returnedRs.length) ? ` · ${int(cancelledRs.length)} iptal · ${int(returnedRs.length)} iade (dahil değil)` : ' · iptal/iade yok') + undeliveredNote + rangeNote,
+        () => openSellerOrderListModal('Sipariş Adeti', activeRs)),
+      card('onway', 'Toplam Komisyon', money(-agg.commission), 'sipariş anında kesinleşen oran' + rangeNote,
+        () => openSellerOrderListModal('Toplam Komisyon', activeRs)),
+      card('preparing', 'Toplam Kesintiler', money(-agg.allDeductions), 'kargo+ceza+diğer+platform+stopaj' + rangeNote,
+        () => openSellerOrderListModal('Toplam Kesintiler', activeRs)),
+      card('onway', 'Toplam Ürün Maliyeti', money(agg.cost), missing.length ? `* ${int(missing.length)} üründe maliyet eksik` : 'ortalama alış fiyatından hesaplandı',
+        () => openSellerOrderListModal('Toplam Ürün Maliyeti', activeRs)),
+      card(agg.netEstimated < 0 ? 'closed' : 'delivered', 'Tahmini Net Kâr', money(agg.netEstimated), 'satış − (komisyon+kesintiler+ürün maliyeti)' + rangeNote,
+        () => openSellerOrderListModal('Tahmini Net Kâr', activeRs)),
+      card(cancelledRs.length ? 'closed' : 'preparing', 'İptaller', money(sumBy(cancelledRs, (r) => r.gross_amount)), `${int(cancelledRs.length)} sipariş` + rangeNote,
+        cancelledRs.length ? () => openSellerOrderListModal('İptaller', cancelledRs) : null),
+      card(returnedRs.length ? 'closed' : 'preparing', 'İadeler (Kesinleşmiş)', money(sumBy(returnedRs, (r) => (num(r.return_amount) ? Math.abs(num(r.return_amount)) : num(r.gross_amount)))), `${int(returnedRs.length)} sipariş — ürün fiziksel olarak geri döndü` + rangeNote,
+        returnedRs.length ? () => openSellerOrderListModal('İadeler (Kesinleşmiş)', returnedRs) : null),
       card(dp.n ? (dp.sum < 0 ? 'closed' : 'delivered') : 'preparing', 'Kesinleşen Kâr',
         dp.n ? money(dp.sum) : '—', (dp.n ? `${int(dp.n)} teslim edilen sipariş` : 'henüz teslim edilen sipariş yok') + rangeNote,
         dp.n ? goToDeliveredOrders : null));
@@ -1286,16 +1323,19 @@
     const active = rs.filter((r) => !isClosedSellerOrder(r));
     const activeGross = sumBy(active, (r) => r.gross_amount);
     const cancelOnly = rs.filter(isCancelledOrder).length;
+    const undeliveredCount = rs.filter(isUnDeliveredPendingOrder).length;
     const costMissingCount = rs.filter((r) => r.cost_missing).length;
     const agg = profitAgg(rs);
     const dp = deliveredProfit(rs);
+    // v20: cancelledCount artık SADECE iptal + KESİNLEŞMİŞ iade (isClosedSellerOrder'daki düzeltmeyle
+    // uyumlu) — "UnDelivered" (henüz süreç bitmedi) artık aktife dahil, ayrı bilgi olarak gösteriliyor.
     const cancelledCount = rs.length - active.length;
     const activeQty = sumBy(active, (r) => r.qty);
     host.replaceChildren(
       card('total', 'Toplam Satış', money(activeGross), `${int(active.length)} sipariş · ${int(activeQty)} adet`),
       // Umit'in isteğiyle: büyük rakam artık iptalleri SAYMIYOR (iptaller hariç aktif sipariş
       // sayısı) — iptal/iade sayısı ayrı bir bilgi olarak alt satırda gösteriliyor.
-      card('onway', 'Sipariş Adeti', int(active.length), `${int(activeQty)} adet` + (cancelledCount ? ` · ${int(cancelOnly)} iptal · ${int(cancelledCount - cancelOnly)} iade/teslim edilemedi (dahil değil)` : ' · iptal/iade yok')),
+      card('onway', 'Sipariş Adeti', int(active.length), `${int(activeQty)} adet` + (cancelledCount ? ` · ${int(cancelOnly)} iptal · ${int(cancelledCount - cancelOnly)} kesinleşmiş iade (dahil değil)` : ' · iptal/iade yok') + (undeliveredCount ? ` · ${int(undeliveredCount)} teslim edilemedi (satışa dahil)` : '')),
       card('onway', 'Toplam Komisyon', money(-agg.commission), 'sipariş anında kesinleşen oran'),
       card('preparing', 'Toplam Kesintiler', money(-agg.allDeductions), 'kargo+ceza+diğer+platform+stopaj'),
       card('onway', 'Toplam Ürün Maliyeti', money(agg.cost), costMissingCount ? `* ${int(costMissingCount)} siparişte ürün maliyeti eksik` : 'ortalama alış fiyatından hesaplandı'),
