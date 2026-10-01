@@ -2,6 +2,23 @@
 (function () {
   'use strict';
 
+  // ---------- SİSTEME ÖZEL AYARLAR (config.js) ----------
+  // Bu dosya (dashboard.js) HER kurulumda AYNIDIR. Mağaza adı, hesap adları gibi kuruluma özel
+  // her şey config.js içindeki window.TY_CONFIG'ten okunur — buraya ASLA isim/marka/e-posta yazma.
+  const CFG = (typeof window !== 'undefined' && window.TY_CONFIG) || {};
+  const APP_NAME = CFG.appName || 'Sipariş ve Ürün Takip';
+  const DEF_ACCT = CFG.defaultAccount || 'Ana Hesap';
+  const CFG_ACCOUNTS = Array.isArray(CFG.accounts) && CFG.accounts.length ? CFG.accounts : [DEF_ACCT];
+  const CFG_PAYERS = Array.isArray(CFG.payers) && CFG.payers.length ? CFG.payers : [DEF_ACCT, 'Şirket'];
+  function applyBranding() {
+    try {
+      document.title = APP_NAME;
+      const h = document.getElementById('appTitle') || document.querySelector('#brandHome h1'); if (h) h.textContent = APP_NAME;
+      const img = document.querySelector('#brandHome img.logo'); if (img) img.alt = CFG.brand || '';
+    } catch (e) { /* marka gösterimi kritik değil */ }
+  }
+  if (typeof document !== 'undefined') { if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', applyBranding); else applyBranding(); }
+
   // ---------- küçük yardımcılar ----------
   const $ = (s, r = document) => r.querySelector(s);
   const pad = (n) => String(n).padStart(2, '0');
@@ -126,7 +143,7 @@
       (!F.brands.size || F.brands.has(r.brand || 'Markasız')) &&
       (!F.sellers.size || F.sellers.has(r.seller_name || 'Bilinmiyor')) &&
       (!F.groups.size || F.groups.has(grp(r.item_status))) &&
-      (!F.accounts.size || F.accounts.has(r.buyer_account || 'Ümit')) &&
+      (!F.accounts.size || F.accounts.has(r.buyer_account || DEF_ACCT)) &&
       (!F.sources.size || F.sources.has(r.order_source || 'trendyol')) &&
       (!q || hay(r).includes(q)));
   }
@@ -283,7 +300,7 @@
       data: { labels: bm.map((x) => trunc(x[0], 26)), datasets: [{ data: bm.map((x) => x[1]), backgroundColor: '#2563eb', borderRadius: 6 }] },
       options: { ...base, indexAxis: 'y', plugins: { legend: { display: false }, tooltip: { callbacks: { label: (c) => ' ' + money(c.parsed.x) } } } } });
 
-    // hesap bazlı (Ümit / Eşim vb.)
+    // hesap bazlı (config.js'teki hesap adları)
     const am = [...groupBy(act, (r) => r.buyer_account || 'Diğer').entries()].map(([k, v]) => [k, sumBy(v, (r) => r.line_total)]).sort((a, b) => b[1] - a[1]);
     drawChart('cAccount', { type: 'doughnut',
       data: { labels: am.map((x) => x[0]), datasets: [{ data: am.map((x) => x[1]), backgroundColor: ['#f27a1a', '#2563eb', '#16a34a', '#d97706', '#7c3aed'] }] },
@@ -1718,7 +1735,7 @@
 
   function openManualModal() {
     const modal = $('#modal');
-    const accounts = uniq(['Ümit', ...rows.map((r) => r.buyer_account).filter(Boolean)]);
+    const accounts = uniq([...CFG_ACCOUNTS, ...rows.map((r) => r.buyer_account).filter(Boolean)]);
     const stores = uniq(rows.filter((r) => r.order_source === 'manual').map((r) => r.seller_name).filter(Boolean));
     const { pmap, smap } = buildProdMaps();
     const dl = (id, arr) => el('datalist', { id }, arr.map((v) => el('option', { value: v })));
@@ -1726,7 +1743,7 @@
 
     const store = el('input', { type: 'text', list: 'dlStores', placeholder: 'Örn. Hepsiburada, Amazon, market adı' });
     const date = el('input', { type: 'date' }); date.value = iso(new Date());
-    const acct = el('input', { type: 'text', list: 'dlAccts' }); acct.value = accounts[0] || 'Ümit';
+    const acct = el('input', { type: 'text', list: 'dlAccts' }); acct.value = accounts[0] || DEF_ACCT;
     const status = el('select', {}, [['delivered', 'Teslim edildi'], ['shipped', 'Yolda'], ['preparing', 'Hazırlanıyor']].map(([v, l]) => el('option', { value: v, text: l })));
     const ship = el('input', { type: 'number', step: '0.01', min: '0', placeholder: '0' });
     const url = el('input', { type: 'text', placeholder: 'https://… (isteğe bağlı sipariş linki)' });
@@ -1854,7 +1871,7 @@
     const cats = uniq(['Pazarlama', 'Şirket Kuruluşu', 'Ofis', 'Yazılım / Abonelik', 'Kargo', 'Vergi', 'Diğer', ...expenses.map((e) => e.category).filter(Boolean)]);
     const methods = uniq(['Kredi Kartı', 'Banka Havalesi', 'Nakit', ...expenses.map((e) => e.payment_method).filter(Boolean)]);
     const vendors = uniq(expenses.map((e) => e.vendor).filter(Boolean));
-    const payers = uniq(['Ümit', 'Eşim', 'Şirket', ...expenses.map((e) => e.paid_by).filter(Boolean)]);
+    const payers = uniq([...CFG_PAYERS, ...expenses.map((e) => e.paid_by).filter(Boolean)]);
     const dl = (id, arr) => el('datalist', { id }, arr.map((v) => el('option', { value: v })));
     const F2 = (label, node) => el('div', { class: 'row' }, el('label', { text: label }), node);
 
@@ -2096,7 +2113,7 @@
   function init() {
     multis.brand = multi($('#fBrand'), 'Marka', () => uniq([...rows.map((r) => r.brand || 'Markasız'), ...sellerProfit.map((r) => r.brand || 'Markasız'), ...F.brands]).map((v) => ({ value: v, label: v })), F.brands);
     multis.seller = multi($('#fSeller'), 'Satıcı', () => uniq([...rows.map((r) => r.seller_name || 'Bilinmiyor'), ...F.sellers]).map((v) => ({ value: v, label: v })), F.sellers);
-    multis.account = multi($('#fAccount'), 'Hesap', () => uniq([...rows.map((r) => r.buyer_account || 'Ümit'), ...F.accounts]).map((v) => ({ value: v, label: v })), F.accounts);
+    multis.account = multi($('#fAccount'), 'Hesap', () => uniq([...rows.map((r) => r.buyer_account || DEF_ACCT), ...F.accounts]).map((v) => ({ value: v, label: v })), F.accounts);
     multis.source = multi($('#fSource'), 'Kaynak', () => [{ value: 'trendyol', label: 'Trendyol' }, { value: 'manual', label: 'Manuel' }], F.sources);
     multis.group = multi($('#fGroup'), 'Durum', () => Object.keys(GROUPS).map((k) => ({ value: k, label: GROUPS[k].label })), F.groups);
     multis.expCategory = multi($('#fExpCategory'), 'Kategori', () => uniq(expenses.map((e) => e.category || 'Kategorisiz')).map((v) => ({ value: v, label: v })), EF.categories);
