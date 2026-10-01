@@ -806,7 +806,7 @@
   const orderNet = (r) => num(r.gross_amount) + num(r.commission_amount) + num(r.cargo_fee) + num(r.return_cargo_fee) + num(r.penalty_fee) + num(r.cancel_amount) + num(r.return_amount) + num(r.other_amount);
   const sellerOrderCols = [
     { key: 'order_date', label: 'Tarih', sort: (r) => r.order_date, cell: (r) => fdatetime(r.order_date) },
-    { key: 'order_number', label: 'Sipariş No', sort: (r) => r.order_number, cell: T((r) => r.order_number) },
+    { key: 'order_number', label: 'Sipariş No', sort: (r) => r.order_number, cell: (r) => link(r.cargo_tracking_link, r.order_number) },
     { key: 'status', label: 'Durum', sort: (r) => r.status, cell: (r) => sellerStatusBadge(r.status) },
     { key: 'products', label: 'Ürünler', sort: (r) => r.products, cell: (r) => el('span', { title: r.products || '', text: r.products && r.products.length > 50 ? r.products.slice(0, 49) + '…' : (r.products || '') }) },
     { key: 'qty', label: 'Adet', num: true, sort: (r) => num(r.qty), cell: (r) => int(r.qty) },
