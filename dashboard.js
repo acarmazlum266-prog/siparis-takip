@@ -333,7 +333,7 @@
         sc('preparing', 'Toplam Mağaza Satışı (İptaller Dahil)', money(allGross), `${int(so.length)} sipariş · ${int(sumBy(so, (r) => r.qty))} adet`),
         sc('onway', 'Toplam Komisyon', money(-agg.commission), 'sipariş anında kesinleşen oran'),
         sc('preparing', 'Toplam Giderler', money(-agg.allDeductions), 'kargo+ceza+platform+stopaj+diğer'),
-        sc('onway', 'Toplam Ürün Maliyeti', money(agg.cost), 'ortalama alış fiyatından hesaplandı'),
+        sc('onway', 'Toplam Ürün Maliyeti', money(agg.cost), 'FİFO (alım sırasına göre); veri yoksa son alımların ortalaması'),
         sc(agg.netEstimated < 0 ? 'closed' : 'delivered', 'Tahmini Net Kâr', money(agg.netEstimated), 'satış − (komisyon+giderler+ürün maliyeti)'));
     }
     const smm = groupBy(so, (r) => (r.order_date ? String(r.order_date).slice(0, 7) : 'Tarihsiz'));
@@ -468,11 +468,12 @@
     { key: 'total_spent', label: 'Toplam harcama', num: true, sort: (r) => num(r.total_spent), cell: (r) => money(r.total_spent) },
     { key: 'avg_unit_price', label: 'Ort. fiyat', num: true, sort: (r) => (r.avg_unit_price == null ? null : num(r.avg_unit_price)), cell: (r) => (r.avg_unit_price == null ? '' : money(r.avg_unit_price)) },
     { key: 'last_unit_price', label: 'Son fiyat', num: true, sort: (r) => (r.last_unit_price == null ? null : num(r.last_unit_price)), cell: (r) => (r.last_unit_price == null ? '' : money(r.last_unit_price)) },
+    { key: 'recent_avg_price', label: 'Son 5 Alım Ort.', num: true, sort: (r) => (r.recent_avg_price == null ? null : num(r.recent_avg_price)), cell: (r) => (r.recent_avg_price == null ? '' : el('span', { title: r.recent_n ? `son ${int(r.recent_n)} alımın ortalaması` : '', text: money(r.recent_avg_price) })) },
     { key: 'order_count', label: 'Sipariş', num: true, sort: (r) => num(r.order_count), cell: (r) => int(r.order_count) },
     { key: 'last_order_date', label: 'Son sipariş', sort: (r) => r.last_order_date, cell: (r) => fdate(r.last_order_date) },
     { key: 'price_sim', label: 'Ne Kazanırım?', cell: (r) => el('button', { class: 'icon-btn', title: 'Bu ürünü bir fiyattan satarsan ne kadar kazanırsın, hesapla', onclick: () => openPriceSimModal({
         product_name: r.product_name, barcode: r.product_id,
-        cost_price: r.avg_unit_price != null ? r.avg_unit_price : r.last_unit_price,
+        cost_price: r.recent_avg_price != null ? r.recent_avg_price : (r.last_unit_price != null ? r.last_unit_price : r.avg_unit_price),
         sale_price: null, revenue: null, commission_total: null,
       }) }, '🧮') },
     { key: 'act', label: '', cell: (r) => el('button', { class: 'btn sm', text: 'Stok hareketi', onclick: () => openStockModal(r) }) },
@@ -942,7 +943,7 @@
         () => openSellerOrderListModal('Toplam Komisyon', activeRs)),
       card('preparing', 'Toplam Kesintiler', money(-agg.allDeductions), 'kargo+ceza+diğer+platform+stopaj' + rangeNote,
         () => openSellerOrderListModal('Toplam Kesintiler', activeRs)),
-      card('onway', 'Toplam Ürün Maliyeti', money(agg.cost), missing.length ? `* ${int(missing.length)} üründe maliyet eksik` : 'ortalama alış fiyatından hesaplandı',
+      card('onway', 'Toplam Ürün Maliyeti', money(agg.cost), missing.length ? `* ${int(missing.length)} üründe maliyet eksik` : 'FİFO (alım sırasına göre); veri yoksa son alımların ortalaması',
         () => openSellerOrderListModal('Toplam Ürün Maliyeti', activeRs)),
       card(agg.netEstimated < 0 ? 'closed' : 'delivered', 'Tahmini Net Kâr', money(agg.netEstimated), 'satış − (komisyon+kesintiler+ürün maliyeti)' + rangeNote,
         () => openSellerOrderListModal('Tahmini Net Kâr', activeRs)),
@@ -1355,7 +1356,7 @@
       card('onway', 'Sipariş Adeti', int(active.length), `${int(activeQty)} adet` + (cancelledCount ? ` · ${int(cancelOnly)} iptal · ${int(cancelledCount - cancelOnly)} kesinleşmiş iade (dahil değil)` : ' · iptal/iade yok') + (undeliveredCount ? ` · ${int(undeliveredCount)} teslim edilemedi (satışa dahil)` : '')),
       card('onway', 'Toplam Komisyon', money(-agg.commission), 'sipariş anında kesinleşen oran'),
       card('preparing', 'Toplam Kesintiler', money(-agg.allDeductions), 'kargo+ceza+diğer+platform+stopaj'),
-      card('onway', 'Toplam Ürün Maliyeti', money(agg.cost), costMissingCount ? `* ${int(costMissingCount)} siparişte ürün maliyeti eksik` : 'ortalama alış fiyatından hesaplandı'),
+      card('onway', 'Toplam Ürün Maliyeti', money(agg.cost), costMissingCount ? `* ${int(costMissingCount)} siparişte ürün maliyeti eksik` : 'FİFO (alım sırasına göre); veri yoksa son alımların ortalaması'),
       card(agg.netEstimated < 0 ? 'closed' : 'delivered', 'Tahmini Net Kâr', money(agg.netEstimated), 'satış − (komisyon+kesintiler+ürün maliyeti)'),
       card(dp.n ? (dp.sum < 0 ? 'closed' : 'delivered') : 'preparing', 'Kesinleşen Kâr',
         dp.n ? money(dp.sum) : '—', dp.n ? `${int(dp.n)} teslim edilen sipariş` : 'henüz teslim edilen sipariş yok',
