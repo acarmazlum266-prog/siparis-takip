@@ -724,15 +724,6 @@
     { key: 'brand', label: 'Marka', sort: (r) => r.brand, cell: T((r) => r.brand || 'Markasız') },
     { key: 'current_stock', label: 'Stok', num: true, sort: (r) => num(r.current_stock), cell: (r) => int(r.current_stock) },
     { key: 'sale_price', label: 'Satış fiyatı', num: true, sort: (r) => num(r.sale_price), cell: (r) => (r.sale_price == null ? '' : money(r.sale_price)) },
-    { key: 'buybox', label: 'Buybox', sort: (r) => (r.buybox_order == null ? 999 : num(r.buybox_order)), cell: (r) => {
-        if (r.buybox_order == null) return el('span', { class: 'muted', text: '—' });
-        const syncInfo = r.buybox_synced_at ? ('Son kontrol: ' + fdatetime(r.buybox_synced_at)) : '';
-        if (num(r.buybox_order) === 1) {
-          return el('span', { class: 'badge g-delivered', title: syncInfo, text: 'Buybox sende' });
-        }
-        const rivalPrice = r.buybox_price != null ? money(r.buybox_price) : '';
-        return el('span', { class: 'badge g-closed', title: ['Buybox\'ı şu an başka bir satıcı kazanıyor.', syncInfo].filter(Boolean).join(' '), text: `#${int(r.buybox_order)}` + (rivalPrice ? ' · ' + rivalPrice : '') });
-      } },
     { key: 'price_sim', label: 'Ne Kazanırım?', cell: (r) => el('button', { class: 'icon-btn', title: 'Bu ürünü farklı bir fiyattan satarsan ne kadar kazanırsın, hesapla', onclick: () => openPriceSimModal(r) }, '🧮') },
     { key: 'cost_price', label: 'Maliyet', sort: (r) => (r.cost_price == null ? null : num(r.cost_price)), cell: (r) => {
         if (r.buyer_product_id) {
