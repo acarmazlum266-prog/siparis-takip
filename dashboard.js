@@ -163,6 +163,11 @@
   function stockTotalValue(list) {
     return sumBy(list, (p) => Math.max(0, num(p.current_stock)) * stockUnitCost(p));
   }
+  // Henüz elimize geçmemiş ama parasını zaten ödediğimiz adetler: yolda (kargoda) + hazırlanıyor
+  // (Trendyol'dan durumu henüz netleşmemiş). Stoktaki toplam maliyetin yanına dipnot olarak eklenir.
+  function stockInTransitValue(list) {
+    return sumBy(list, (p) => (Math.max(0, num(p.on_the_way_qty)) + Math.max(0, num(p.pending_qty))) * stockUnitCost(p));
+  }
 
   const expHay = (e) => lc([e.title, e.vendor, e.category, e.payment_method, e.notes].join(' '));
   function filteredExpenses() {
@@ -260,7 +265,8 @@
       el('div', { class: 'card clickable', title: 'Detay için Ürün & Stok sekmesine git', onclick: () => { activeTab = 'stock'; renderAll(); } },
         el('div', { class: 'lbl', text: 'Stoğumdaki Ürünlerin Toplam Maliyeti' }),
         el('div', { class: 'big', text: money(stockTotalValue(stock)) }),
-        el('div', { class: 'sub', text: `${int(stock.filter((p) => num(p.current_stock) > 0).length)} ürün · son 5 alım ort. / son fiyat / ort. fiyat üzerinden` })));
+        el('div', { class: 'sub', text: `${int(stock.filter((p) => num(p.current_stock) > 0).length)} ürün · son 5 alım ort. / son fiyat / ort. fiyat üzerinden` }),
+        el('div', { class: 'sub', text: `+ Yolda/Hazırlanıyor (ödendi, henüz elde değil): ${money(stockInTransitValue(stock))}` })));
   }
 
   function openItemListModal(title, items) {
@@ -1439,9 +1445,11 @@
     tables.stock = makeTable($('#tStock'), stockCols, filteredStock, { sortKey: 'current_stock', sortDir: -1, empty: 'Stok kartı yok',
       summary: (d) => {
         const pend = sumBy(d, (r) => r.pending_qty);
+        const transit = stockInTransitValue(d);
         return `${int(d.length)} ürün · mevcut stok ${int(sumBy(d, (r) => r.current_stock))} adet`
           + (pend > 0 ? ` · hazırlanıyor (durumu netleşmemiş): ${int(pend)} adet` : '')
-          + ` · toplam maliyet: ${money(stockTotalValue(d))}`;
+          + ` · toplam maliyet: ${money(stockTotalValue(d))}`
+          + (transit > 0 ? ` (+ yolda/hazırlanıyor, ödendi: ${money(transit)})` : '');
       } });
     tables.expenses = makeTable($('#tExpenses'), expenseCols, filteredExpenses, { sortKey: 'expense_date', sortDir: -1, empty: 'Filtreye uyan gider yok',
       summary: (d) => `${int(d.length)} gider · toplam ${money(sumBy(d, (r) => r.amount))}` });
