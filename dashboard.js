@@ -154,6 +154,16 @@
       (!q || lc([p.brand, p.product_name].join(' ')).includes(q)));
   }
 
+  // Stoktaki bir ürünün birim maliyeti: önce son 5 alımın ortalaması, yoksa son fiyat,
+  // o da yoksa ömür boyu ortalama fiyat — "Ne Kazanırım?" simülasyonuyla AYNI sıralama.
+  function stockUnitCost(p) {
+    const v = p.recent_avg_price != null ? p.recent_avg_price : (p.last_unit_price != null ? p.last_unit_price : p.avg_unit_price);
+    return v == null ? 0 : num(v);
+  }
+  function stockTotalValue(list) {
+    return sumBy(list, (p) => Math.max(0, num(p.current_stock)) * stockUnitCost(p));
+  }
+
   const expHay = (e) => lc([e.title, e.vendor, e.category, e.payment_method, e.notes].join(' '));
   function filteredExpenses() {
     const q = lc(EF.q.trim());
@@ -246,7 +256,11 @@
         el('div', { class: 'big', text: money(s.avg) }), el('div', { class: 'sub', text: 'iptal/iade hariç' })),
       el('div', { class: 'card clickable', title: 'Detay listesi için tıkla', onclick: () => openItemListModal('Toplam satın alınan', listFor('all')) },
         el('div', { class: 'lbl', text: 'Ortalama sipariş tutarı' }),
-        el('div', { class: 'big', text: money(s.orders ? s.tt / s.orders : 0) }), el('div', { class: 'sub', text: `${int(s.orders)} sipariş üzerinden` })));
+        el('div', { class: 'big', text: money(s.orders ? s.tt / s.orders : 0) }), el('div', { class: 'sub', text: `${int(s.orders)} sipariş üzerinden` })),
+      el('div', { class: 'card clickable', title: 'Detay için Ürün & Stok sekmesine git', onclick: () => { activeTab = 'stock'; renderAll(); } },
+        el('div', { class: 'lbl', text: 'Stoğumdaki Ürünlerin Toplam Maliyeti' }),
+        el('div', { class: 'big', text: money(stockTotalValue(stock)) }),
+        el('div', { class: 'sub', text: `${int(stock.filter((p) => num(p.current_stock) > 0).length)} ürün · son 5 alım ort. / son fiyat / ort. fiyat üzerinden` })));
   }
 
   function openItemListModal(title, items) {
@@ -1426,7 +1440,8 @@
       summary: (d) => {
         const pend = sumBy(d, (r) => r.pending_qty);
         return `${int(d.length)} ürün · mevcut stok ${int(sumBy(d, (r) => r.current_stock))} adet`
-          + (pend > 0 ? ` · hazırlanıyor (durumu netleşmemiş): ${int(pend)} adet` : '');
+          + (pend > 0 ? ` · hazırlanıyor (durumu netleşmemiş): ${int(pend)} adet` : '')
+          + ` · toplam maliyet: ${money(stockTotalValue(d))}`;
       } });
     tables.expenses = makeTable($('#tExpenses'), expenseCols, filteredExpenses, { sortKey: 'expense_date', sortDir: -1, empty: 'Filtreye uyan gider yok',
       summary: (d) => `${int(d.length)} gider · toplam ${money(sumBy(d, (r) => r.amount))}` });
@@ -1528,21 +1543,29 @@
       el('div', { class: 'row' }, el('label', { text: 'Not' }), note),
       err,
       el('div', { class: 'btns' }, el('button', { class: 'btn', text: 'Kapat', onclick: closeModal }), el('button', { class: 'btn primary', text: 'Kaydet', onclick: save })),
-      el('h3', { text: 'Geçmiş hareketler', style: 'margin-top:16px' }), hist));
+      el('h3', { text: 'Ürün hareket geçmişi (giriş / çıkış)', style: 'margin-top:16px' }),
+      el('div', { class: 'muted', style: 'margin-bottom:6px', text: 'Alımlar (Trendyol siparişleri), mağaza satışların ve manuel hareketlerin HEPSİ tek listede, tarihe göre.' }),
+      hist));
     modal.classList.remove('hide');
     priceRow.classList.add('hide');
 
+    // DÜZELTME (Ekim 2026 — Ümit): eskiden burada SADECE elle girilen hareketler (ty_stock_movements)
+    // görünüyordu; Trendyol'dan yapılan alımlar ve kendi mağazandan yapılan satışlar hiç yoktu.
+    // ty_product_movements() RPC'si üçünü birleştirip tek bir zaman çizelgesi döndürüyor.
+    const SOURCE_BADGE = { 'Alım': 'g-delivered', 'Mağaza Satışı': 'g-onway', 'Manuel': 'g-preparing' };
     try {
-      const list = await call({ type: 'API', method: 'GET', path: `/rest/v1/ty_stock_movements?product_id=eq.${encodeURIComponent(p.product_id)}&select=id,movement_type,quantity,unit_price,moved_at,note&order=moved_at.desc` });
+      const list = await call({ type: 'API', method: 'POST', path: '/rest/v1/rpc/ty_product_movements', body: { p_product_id: p.product_id } });
       hist.replaceChildren();
-      if (!list.length) hist.textContent = 'Henüz manuel hareket yok.';
+      if (!list.length) hist.textContent = 'Henüz hiç hareket yok.';
       list.forEach((m) => hist.append(el('div', { class: 'mv' },
-        el('span', { text: `${fdate((m.moved_at || '').slice(0, 10))} · ${MOVE_TR[m.movement_type] || m.movement_type} · ${m.quantity > 0 ? '+' : ''}${m.quantity}${m.unit_price != null ? ' · ' + money(m.unit_price) : ''}${m.note ? ' · ' + m.note : ''}` }),
-        el('button', { class: 'btn sm danger', text: 'Sil', onclick: async () => {
-          if (!confirm('Bu stok hareketi silinsin mi?')) return;
+        el('span', { class: 'badge ' + (SOURCE_BADGE[m.source] || ''), text: m.source }),
+        el('span', { text: ` ${fdate(m.move_date)} · ${m.direction === 'in' ? '+' : '−'}${int(m.quantity)} adet`
+          + `${m.unit_price != null ? ' · ' + money(m.unit_price) : ''}${m.ref ? ' · ' + m.ref : ''}${m.status ? ' · ' + (STATUS_TR[m.status] || MOVE_TR[m.status] || m.status) : ''}` }),
+        m.id ? el('button', { class: 'btn sm danger', text: 'Sil', onclick: async () => {
+          if (!confirm('Bu manuel hareket silinsin mi?')) return;
           try { await call({ type: 'API', method: 'DELETE', path: `/rest/v1/ty_stock_movements?id=eq.${encodeURIComponent(m.id)}`, prefer: 'return=minimal' }); closeModal(); await load(); }
           catch (e) { err.textContent = 'Silinemedi: ' + e.message; }
-        } }))));
+        } }) : null)));
     } catch (e) { hist.textContent = 'Geçmiş alınamadı: ' + e.message; }
   }
 
