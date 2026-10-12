@@ -56,13 +56,33 @@
     return { id: p.sub, email: p.email || s.email || '' };
   }
 
+  // YENİ (ekim 2026, Umit'in isteğiyle — kısa vadeli rahatlatma): arkadaşının Supabase
+  // projesi Tokyo'da (eu-west-1'e göre çok daha uzak), bu yüzden panel açılışta attığı
+  // çok sayıda paralel isteğin bazıları zaman zaman ağ seviyesinde başarısız oluyor
+  // ("Failed to fetch" — sunucudan bir HTTP hata kodu bile DÖNMEDEN, bağlantı tamamlanamıyor).
+  // Bu, GERÇEK kök nedeni (uzak bölge) düzeltmiyor — sadece kullanıcıya hiç göstermeden,
+  // birkaç kez otomatik tekrar deniyor. HTTP 400/401/403/500 gibi sunucunun GERÇEKTEN
+  // yanıt verdiği durumları tekrar DENEMİYORUZ (onlar ağ sorunu değil, gerçek bir hata/yetki
+  // sorunu olur) — sadece fetch()'in kendisinin TAMAMEN başarısız olduğu (ağ kopması/zaman
+  // aşımı) durumda, kısa bir bekleme ile 1, sonra 2 kez daha deniyoruz.
+  async function fetchWithRetry(url, opts, maxRetries = 2) {
+    for (let attempt = 0; ; attempt++) {
+      try {
+        return await fetch(url, opts);
+      } catch (e) {
+        if (attempt >= maxRetries) throw e;
+        await new Promise((res) => setTimeout(res, 500 * (attempt + 1)));
+      }
+    }
+  }
+
   async function api(method, path, body, prefer, forceRefresh) {
-    if (!/^\/rest\/v1\/(rpc\/ty_[a-z_]+|(v_)?ty_[a-z_]+|expenses)(\?.*)?$/.test(path)) throw new Error('İzin verilmeyen adres');
+    if (!/^\/rest\/v1\/(rpc\/(?:ty|hb)_[a-z_]+|(v_)?(?:ty|hb)_[a-z_]+|expenses)(\?.*)?$/.test(path)) throw new Error('İzin verilmeyen adres');
     const c = cfg();
     const s = await getSession(forceRefresh);
     const headers = { apikey: c.anonKey, Authorization: `Bearer ${s.access_token}`, 'Content-Type': 'application/json' };
     if (prefer) headers.Prefer = prefer;
-    const r = await fetch(`${c.url}${path}`, { method, headers, body: body ? JSON.stringify(body) : undefined });
+    const r = await fetchWithRetry(`${c.url}${path}`, { method, headers, body: body ? JSON.stringify(body) : undefined });
     if (r.status === 401 && !forceRefresh) return api(method, path, body, prefer, true);
     const txt = await r.text();
     let j = null; try { j = txt ? JSON.parse(txt) : null; } catch (e) { /* boş yanıt */ }
