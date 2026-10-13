@@ -850,11 +850,19 @@
   const sellerOrderCols = [
     { key: 'order_date', label: 'Tarih', sort: (r) => r.order_date, cell: (r) => fdatetime(r.order_date) },
     { key: 'order_number', label: 'Sipariş No', sort: (r) => r.order_number, cell: (r) => link(r.cargo_tracking_link, r.order_number) },
-    { key: 'status', label: 'Durum', sort: (r) => r.status, cell: (r) => el('div', {}, [
-        sellerStatusBadge(r.status),
-        r.claim_confirmed_return ? el('span', { class: 'badge g-closed', style: 'margin-left:4px', title: r.claim_status ? ('İade talebi: ' + r.claim_status) : '', text: 'İade Edildi' }) : null,
-        (!r.claim_confirmed_return && r.claim_pending) ? el('span', { class: 'badge g-preparing', style: 'margin-left:4px', title: 'Müşteri iade talebi açtı, henüz sonuçlanmadı', text: 'İade Talebi Var' }) : null,
-      ]) },
+    // YENİ (13 Ekim 2026): kesinleşmiş bir iade talebi varsa Trendyol'un hiç değişmeyen
+    // "Delivered" rozetini göstermek yerine DOĞRUDAN "İade Edildi" gösteriyoruz (Umit'in
+    // isteğiyle — iki ayrı rozet yerine tek, net bir durum). Sonuçlanmamış (bekleyen) bir
+    // talep varsa, asıl durumun yanında ayrıca bilgi amaçlı "İade Talebi Var" gösterilir.
+    // v2 (13 Ekim 2026 — Umit'in isteğiyle): "İade Edildi" yerine, Trendyol'un kendi eski
+    // "Returned" durumuyla AYNI metni gösteriyoruz — bazı eski siparişlerde zaten doğrudan
+    // Trendyol'dan "Returned" durumu geliyordu, iki farklı yazı kafa karıştırıyordu.
+    { key: 'status', label: 'Durum', sort: (r) => r.status, cell: (r) => r.claim_confirmed_return
+        ? el('span', { class: 'badge g-closed', title: r.claim_status ? ('İade talebi: ' + r.claim_status) : '', text: 'Returned' })
+        : el('div', {}, [
+            sellerStatusBadge(r.status),
+            r.claim_pending ? el('span', { class: 'badge g-preparing', style: 'margin-left:4px', title: 'Müşteri iade talebi açtı, henüz sonuçlanmadı', text: 'İade Talebi Var' }) : null,
+          ]) },
     { key: 'products', label: 'Ürünler', sort: (r) => r.products, cell: (r) => el('span', { title: r.products || '', text: r.products && r.products.length > 50 ? r.products.slice(0, 49) + '…' : (r.products || '') }) },
     { key: 'qty', label: 'Adet', num: true, sort: (r) => num(r.qty), cell: (r) => int(r.qty) },
     { key: 'gross_amount', label: 'Sipariş Tutarı', num: true, sort: (r) => num(r.gross_amount), cell: (r) => money(r.gross_amount) },
