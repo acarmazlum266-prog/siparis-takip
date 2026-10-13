@@ -1486,10 +1486,11 @@
       summary: (d) => `${int(d.length)} ürün · ciro ${money(sumBy(d, (r) => r.revenue))} · net kâr ${money(sumBy(d, (r) => (r.cost_missing ? 0 : r.net_profit)))}${d.some((r) => r.cost_missing) ? ' (* maliyeti eksik ürünler hariç)' : ''}` });
     tables.sellerOrders = makeTable($('#tSellerOrders'), sellerOrderCols, filteredSellerOrders, { sortKey: 'order_date', sortDir: -1,
       empty: 'Filtreye uyan sipariş yok',
-      // İptal edilen siparişte tüm masraf/kâr rakamları anlamsız (Trendyol'dan zaten hiç ödeme
-      // gelmiyor) — satırı görsel olarak "etkisiz" göster (üstü çizili, soluk), yanlış rakamlar
-      // gerçekmiş gibi görünmesin.
-      rowClass: (r) => (isCancelledOrder(r) ? 'row-cancelled' : ''),
+      // İptal edilen VE kesinleşmiş iade olan siparişte tüm masraf/kâr rakamları artık kazanç
+      // sayılmıyor (ürün geri geldi/para iade edildi) — satırı görsel olarak "etkisiz" göster
+      // (üstü çizili, soluk), yanlış rakamlar gerçekmiş kâr gibi görünmesin. (v21 — Umit'in isteğiyle:
+      // önceden sadece iptaller soluklaşıyordu, kesinleşmiş iadeler normal/aktif görünüyordu.)
+      rowClass: (r) => (isClosedSellerOrder(r) ? 'row-cancelled' : ''),
       summary: (d) => `${int(d.length)} sipariş · tutar ${money(sumBy(d, (r) => r.gross_amount))}` });
   }
 
