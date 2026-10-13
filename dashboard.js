@@ -73,7 +73,10 @@
   const F = { from: '', to: '', brands: new Set(), sellers: new Set(), groups: new Set(), accounts: new Set(), sources: new Set(), q: '', services: false };
   const IF = { onlyUnchecked: true };
   const SF = { onlyMissing: false };
-  const OF = { status: '', hideCancelled: false };
+  // v3 (13 Ekim 2026 — Umit'in isteğiyle): "status" (tek seçim) yerine "statuses" (çoklu
+  // seçim, Set) — ayrıca İptal ve İade artık AYRI seçenekler (eskiden "İptal / İade" tek
+  // seçenekti). "status" alanı eski kodla uyumluluk için duruyor ama artık kullanılmıyor.
+  const OF = { status: '', statuses: new Set(), hideCancelled: false };
   const EF = { categories: new Set(), methods: new Set(), vendors: new Set(), q: '' };
   let activeTab = 'overview';
   let ovTab = 'buy';
@@ -374,9 +377,9 @@
 
     const sLabel = { delivered: 'Teslim edildi', onway: 'Yolda/Kargoda', preparing: 'Hazırlanıyor', closed: 'İptal/İade', unknown: 'Bilinmiyor' };
     const sColor = { delivered: '#16a34a', onway: '#2563eb', preparing: '#d97706', closed: '#dc2626', unknown: '#6b7280' };
-    const skeys = Object.keys(sLabel).filter((k) => so.some((r) => sellerStatusGroup(r.status) === k));
+    const skeys = Object.keys(sLabel).filter((k) => so.some((r) => sellerStatusGroup(r.status, r) === k));
     drawChart('cStoreStatus', { type: 'doughnut',
-      data: { labels: skeys.map((k) => sLabel[k]), datasets: [{ data: skeys.map((k) => so.filter((r) => sellerStatusGroup(r.status) === k).length), backgroundColor: skeys.map((k) => sColor[k]) }] },
+      data: { labels: skeys.map((k) => sLabel[k]), datasets: [{ data: skeys.map((k) => so.filter((r) => sellerStatusGroup(r.status, r) === k).length), backgroundColor: skeys.map((k) => sColor[k]) }] },
       options: { ...base, plugins: { legend: { position: 'bottom' }, tooltip: { callbacks: { label: (c) => ` ${c.label}: ${int(c.parsed)} sipariş` } } } } });
   }
 
@@ -778,13 +781,19 @@
   ];
 
   // ---------- mağaza siparişleri (satır satır detay) ----------
-  function sellerStatusGroup(status) {
+  function sellerStatusGroup(status, r) {
+    if (r && (isCancelledOrder(r) || isConfirmedReturnedOrder(r))) return 'closed';
     const s = lc(status || '');
     if (/delivered/.test(s)) return 'delivered';
     if (/cancel|return|unsupplied|undeliver/.test(s)) return 'closed';
     if (/shipped|picking|invoiced|collection/.test(s)) return 'onway';
     if (/created|awaiting/.test(s)) return 'preparing';
     return 'unknown';
+  }
+  function sellerOrderStatusKey(r) {
+    if (isCancelledOrder(r)) return 'cancelled';
+    if (isConfirmedReturnedOrder(r)) return 'returned';
+    return sellerStatusGroup(r.status);
   }
   function sellerStatusBadge(status) {
     const cls = { delivered: 'g-delivered', closed: 'g-closed', onway: 'g-onway', preparing: 'g-preparing', unknown: 'g-unknown' }[sellerStatusGroup(status)];
@@ -806,7 +815,7 @@
         const hay = normTxt([r.order_number, r.products].join(' '));
         if (!hay.includes(q)) return false;
       }
-      if (OF.status && sellerStatusGroup(r.status) !== OF.status) return false;
+      if (OF.statuses.size && !OF.statuses.has(sellerOrderStatusKey(r))) return false;
       if (OF.hideCancelled && isCancelledOrder(r)) return false;
       return true;
     });
@@ -924,8 +933,8 @@
   // (Kesinleşen Kâr zaten TAM OLARAK teslim edilmiş siparişlerin toplamı, bkz. deliveredProfit()).
   function goToDeliveredOrders() {
     activeTab = 'storeOrders';
-    OF.status = 'delivered';
-    if ($('#ocStatus')) $('#ocStatus').value = 'delivered';
+    OF.statuses.clear(); OF.statuses.add('delivered');
+    if (multis.ocStatus) multis.ocStatus.draw();
     renderAll();
   }
   // Kart tıklamalarında sipariş listesi göstermek için kompakt sütun seti — zaten var olan
@@ -1207,7 +1216,7 @@
     const rowsEl = pending.slice(0, 300).map((r) => el('tr', {},
       el('td', { text: fdate((r.order_date || '').slice(0, 10)) }),
       el('td', { text: r.order_number || '' }),
-      el('td', { text: statusLbl[sellerStatusGroup(r.status)] || r.status || '' }),
+      el('td', { text: statusLbl[sellerStatusGroup(r.status, r)] || r.status || '' }),
       el('td', { text: r.products || '' }),
       el('td', { text: money(estimatedPayout(r)) })));
     host.replaceChildren(
@@ -1296,7 +1305,7 @@
   function renderSettlePending() {
     const host = $('#settlePending'); if (!host) return;
     const settledOrderNos = new Set(sellerSettlements.map((r) => r.order_number).filter(Boolean));
-    const delivered = sellerOrders.filter((r) => sellerStatusGroup(r.status) === 'delivered' && !isCancelledOrder(r));
+    const delivered = sellerOrders.filter((r) => sellerStatusGroup(r.status, r) === 'delivered' && !isCancelledOrder(r));
     const pending = delivered.filter((r) => !settledOrderNos.has(r.order_number)).sort((a, b) => (b.order_date || '').localeCompare(a.order_date || ''));
     if (!pending.length) { host.replaceChildren(el('p', { class: 'muted', text: 'Teslim edilen tüm siparişlerin hakedişi gelmiş görünüyor. 👍' })); return; }
     const rowsEl = pending.slice(0, 200).map((r) => el('tr', {},
@@ -1357,7 +1366,7 @@
   // faturası ayrıca gelirse net_profit_confirmed zaten onu kullanır, gelmediyse tahmini formül
   // kullanılır, ama sipariş TESLİM olduğu için artık "kesin" sayılabilir).
   function deliveredProfit(list) {
-    const delivered = (list || []).filter((r) => sellerStatusGroup(r.status) === 'delivered');
+    const delivered = (list || []).filter((r) => sellerStatusGroup(r.status, r) === 'delivered');
     const sum = sumBy(delivered, (r) => (r.fully_confirmed && r.net_profit_confirmed != null ? num(r.net_profit_confirmed) : num(r.net_profit_estimated)));
     return { n: delivered.length, sum };
   }
@@ -2151,7 +2160,7 @@
     if (F.q && F.q.trim()) n++;
     if (F.services) n++;
     // v12: bu panele taşınan sekmeye-özel filtreler de sayıma dahil.
-    if (OF.status) n++;
+    n += OF.statuses.size;
     if (OF.hideCancelled) n++;
     if (SF.onlyMissing) n++;
     if (n > 0) { badge.textContent = String(n); badge.classList.remove('hide'); }
@@ -2165,6 +2174,13 @@
     multis.account = multi($('#fAccount'), 'Hesap', () => uniq([...rows.map((r) => r.buyer_account || DEF_ACCT), ...F.accounts]).map((v) => ({ value: v, label: v })), F.accounts);
     multis.source = multi($('#fSource'), 'Kaynak', () => [{ value: 'trendyol', label: 'Trendyol' }, { value: 'manual', label: 'Manuel' }], F.sources);
     multis.group = multi($('#fGroup'), 'Durum', () => Object.keys(GROUPS).map((k) => ({ value: k, label: GROUPS[k].label })), F.groups);
+    multis.ocStatus = multi($('#ocStatus'), 'Sipariş Durumu', () => ([
+      { value: 'preparing', label: 'Yeni' },
+      { value: 'onway', label: 'Kargolandı' },
+      { value: 'delivered', label: 'Teslim Edildi' },
+      { value: 'cancelled', label: 'İptal' },
+      { value: 'returned', label: 'İade' },
+    ]), OF.statuses);
     multis.expCategory = multi($('#fExpCategory'), 'Kategori', () => uniq(expenses.map((e) => e.category || 'Kategorisiz')).map((v) => ({ value: v, label: v })), EF.categories);
     multis.expMethod = multi($('#fExpMethod'), 'Ödeme Yöntemi', () => uniq(expenses.map((e) => e.payment_method || 'Belirtilmemiş')).map((v) => ({ value: v, label: v })), EF.methods);
     multis.expVendor = multi($('#fExpVendor'), 'Ödenen Kurum', () => uniq(expenses.map((e) => e.vendor || 'Belirtilmemiş')).map((v) => ({ value: v, label: v })), EF.vendors);
@@ -2181,8 +2197,8 @@
       $('#q').value = ''; $('#svc').checked = false; $('#preset').value = 'all'; setPreset('all');
       // v12: Siparişler'e özel Durum/İptalleri Gizle ve Mağaza'ya özel Sadece maliyeti eksik
       // olanlar artık bu panelde yaşıyor — hepsi birlikte temizlensin.
-      OF.status = ''; OF.hideCancelled = false; SF.onlyMissing = false;
-      if ($('#ocStatus')) $('#ocStatus').value = '';
+      OF.statuses.clear(); OF.hideCancelled = false; SF.onlyMissing = false;
+      if (multis.ocStatus) multis.ocStatus.draw();
       if ($('#ocHideCancelled')) $('#ocHideCancelled').checked = false;
       if ($('#sellerOnlyMissing')) $('#sellerOnlyMissing').checked = false;
       Object.values(multis).forEach((m) => m.draw());
@@ -2256,7 +2272,6 @@
     on('#orderCostsFile', 'change', (e) => { const f = e.target.files && e.target.files[0]; e.target.value = ''; if (f) handleOrderCostsFile(f); });
     // v11/v12: Tarih ve arama üstteki genel filtreden (F.from/F.to/F.q) geliyor — bu sekmeye özel
     // sadece Durum ve İptalleri Gizle kaldı (bkz. filteredSellerOrders). Temizleme #clear'da.
-    on('#ocStatus', 'change', (e) => { OF.status = e.target.value; renderActive(filteredRows()); updateFiltersBadge(); });
     on('#ocHideCancelled', 'change', (e) => { OF.hideCancelled = e.target.checked; renderActive(filteredRows()); updateFiltersBadge(); });
     on('#brandHome', 'click', () => { activeTab = 'overview'; renderAll(); });
     $('#refresh').addEventListener('click', load);
