@@ -757,8 +757,17 @@
             el('button', { class: 'btn sm', text: 'Elle gir', onclick: () => editProductCost(r) }),
             el('button', { class: 'btn sm danger', text: 'Bağlantıyı kaldır', title: 'Yanlış eşleşmişse: bağlantıyı kaldırır, stok düşümü ve maliyet otomatik hesabı durur', onclick: () => unlinkSellerCost(r) }));
         }
+        // v22 (21 Ekim 2026 — Umit'in isteğiyle): elle maliyet girilmiş ama hiçbir alım kaydına
+        // bağlı OLMAYAN ürünlerde eskiden sadece "(manuel)" yazısı görünüyordu, "Ara/Bağla" veya
+        // öneri varsa "Onayla" butonu hiç gösterilmiyordu — yani sonradan gerçek bir alıma
+        // bağlamanın yolu yoktu. Artık elle fiyat olsa bile bağlama imkânı korunuyor.
         if (r.manual_cost_price != null) {
-          return el('span', { class: 'editable', title: 'Değiştirmek için tıkla', text: money(r.manual_cost_price) + ' (manuel)', onclick: () => editProductCost(r) });
+          const sug = suggestBuyerMatch(r);
+          return el('div', { class: 'acts-left' },
+            el('span', { class: 'editable', title: 'Değiştirmek için tıkla', text: money(r.manual_cost_price) + ' (manuel)', onclick: () => editProductCost(r) }),
+            sug
+              ? el('button', { class: 'btn sm', text: 'Onayla', title: `Öneri: ${sug.product_name} — ortalama ${money(sug.avg_unit_price)}`, onclick: () => linkSellerCost(r, sug.product_id) })
+              : el('button', { class: 'btn sm', text: 'Ara/Bağla', onclick: () => relinkSellerCost(r) }));
         }
         const sug = suggestBuyerMatch(r);
         if (sug) {
