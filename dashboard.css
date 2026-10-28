@@ -70,6 +70,10 @@ main>.cards:first-child{margin-top:-2px;padding-top:12px;border-top:1px solid #e
 .icon-btn.labeled{width:auto;height:auto;padding:7px 14px;gap:7px;border-radius:20px;font-size:13.5px;font-weight:700;color:#fff;background:linear-gradient(135deg,#4c3fae 0%,#7b6ce0 100%);border:1px solid #4c3fae;box-shadow:0 1px 3px rgba(76,63,174,.35)}
 .icon-btn.labeled span{color:#fff;font-weight:700;letter-spacing:.2px}
 .icon-btn.labeled:hover{background:linear-gradient(135deg,#453991 0%,#6e5fd6 100%);box-shadow:0 2px 8px rgba(76,63,174,.45)}
+/* v20 — "Senkronize Et" butonunun altında en son gerçek senkron zamanını gösteren küçük etiket
+   (sayfa yenileme/"Yenile" tuşuyla KARIŞTIRILMASIN diye — Umit'in isteği). */
+.sync-btn-wrap{display:flex;flex-direction:column;align-items:center;gap:2px}
+.sync-top-status{font-size:10.5px;color:#453991;font-weight:600;line-height:1.1;white-space:nowrap}
 .tabs button{padding:6px 13px;border:0;border-radius:8px;background:none;font-weight:700;color:#3d4778;cursor:pointer;font-size:12.5px;transition:background .15s ease,color .15s ease}
 .tabs button:hover:not(.on){color:#1f2937}
 .tabs button.on{color:#1f2937;background:#fff;box-shadow:0 1px 3px rgba(15,23,42,.15)}

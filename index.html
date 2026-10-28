@@ -35,7 +35,10 @@
   <!-- v11: Umit'in isteğiyle — eskiden "Siparişler" ve "Mağaza & Karlılık" sekmelerinin içinde,
        aşağıda kaybolan iki ayrı buton vardı. Artık TEK, her zaman görünen (üst çubukta sabit)
        bir buton var; hangi sekmede olursan ol aynı mağaza senkronunu tetikliyor. -->
-  <button id="sellerSyncNow" class="icon-btn labeled" type="button" title="Trendyol mağaza verilerini şimdi senkronize et">↻ <span>Senkronize Et</span></button>
+  <div class="sync-btn-wrap">
+    <button id="sellerSyncNow" class="icon-btn labeled" type="button" title="Trendyol mağaza verilerini şimdi senkronize et">↻ <span>Senkronize Et</span></button>
+    <span id="sellerSyncTop" class="sync-top-status"></span>
+  </div>
   <button id="openProfitCalc" class="icon-btn labeled" type="button" title="Komisyon &amp; Kârlılık Hesapla">🧮 <span>Karlılık Hesapla</span></button>
 </div>
 <div id="banner" class="banner hide"></div>

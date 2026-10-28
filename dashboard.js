@@ -2099,6 +2099,19 @@
     return !!(sellerLastSync && !sellerLastSync.settlements_synced && (sellerOrders.length || sumBy(sellerProfit, (r) => r.qty_sold)));
   }
   const SETTLE_WARN_TEXT = '⚠️ Henüz hiç hakediş (settlement) kaydı gelmedi — bu yüzden komisyon/kargo/ceza kesintileri rakamlara henüz yansımamış olabilir. Aşağıdaki kâr/net tutar, olması gerekenden YÜKSEK görünüyor olabilir; hakediş verisi Trendyol\'dan geldikçe otomatik güncellenecek.';
+  // v20 — Umit'in isteğiyle: üstteki "↻ Senkronize Et" butonunun altında, en son GERÇEKTEN
+  // Trendyol API'sinden veri çekilen anı gösteren kısa bir etiket. Üst bardaki "#sub" yazısı
+  // (güncelleme SS:dd) sadece panelin Supabase'den okuma anını gösteriyor — sayfa açılışında/
+  // "Yenile" tuşunda da değişiyor, gerçek API senkronuyla karıştırılmasın diye burada AYRI,
+  // sadece ty_seller_sync_log'un en son kaydına (ran_at) dayanan bir zaman gösteriyoruz.
+  function renderSyncTopStatus() {
+    const el = $('#sellerSyncTop');
+    if (!el) return;
+    if (!sellerLastSync) { el.textContent = 'Son senkron: henüz yok'; return; }
+    const d = new Date(sellerLastSync.ran_at);
+    const ds = pad(d.getDate()) + '.' + pad(d.getMonth() + 1) + ' ' + pad(d.getHours()) + ':' + pad(d.getMinutes());
+    el.textContent = (sellerLastSync.ok ? 'Son senkron: ' : '⚠ Son senkron (hata): ') + ds;
+  }
   let syncing = false;
   async function triggerSellerSync(btn) {
     if (syncing) return;
@@ -2152,6 +2165,7 @@
     else tables[activeTab].render();
   }
   function renderAll() {
+    renderSyncTopStatus();
     const rs = filteredRows();
     renderCards(rs);
     if ($('#cards')) $('#cards').classList.toggle('hide', !['overview', 'orders'].includes(activeTab));
